@@ -115,8 +115,9 @@ end
 -- the spring only supplies the pull. lowerAmount 0 just holds the current pose.
 function TIV.Anchor.StartPullDown(veh, data, lowerAmount)
     if not IsValid(veh) then return 0 end
+    -- game.GetWorld() is never IsValid(); constraint.* accepts it directly.
     local world = game.GetWorld()
-    if not IsValid(world) then return 0 end
+    if not world then return 0 end
     lowerAmount = lowerAmount or 0
 
     local mounts = MountPoints(veh, data)
@@ -137,7 +138,7 @@ function TIV.Anchor.StartPullDown(veh, data, lowerAmount)
             start  = mountWorld,
             endpos = mountWorld - Vector(0, 0, 300),
             filter = filter,
-            mask   = MASK_SOLID_BRUSHONLY,
+            mask   = MASK_SOLID,
         })
         if tr.Hit and not tr.StartSolid then
             local restLen = mountWorld:Distance(tr.HitPos)
@@ -253,7 +254,7 @@ end
 function TIV.Anchor.AttachWorld(veh, data)
     if not IsValid(veh) then return end
     local world = game.GetWorld()
-    if not IsValid(world) then return end
+    if not world then return end
     local limit = GetPivotLimit() * 0.5
     local bs = constraint.AdvBallsocket(
         veh, world, 0, 0,
