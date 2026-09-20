@@ -131,6 +131,24 @@ hook.Add("StartCommand", "TIV_DriveLock", function(ply, cmd)
     cmd:SetButtons(bit.band(cmd:GetButtons(), bit.bnot(DRIVE_BUTTONS)))
 end)
 
+-- The jeep's own input code toggles the handbrake off whenever it sees the
+-- driver release it, and SetHandbrake(true) is not sticky, so the brake is
+-- re-asserted every tick while a sequence is running.
+hook.Add("Think", "TIV_HoldHandbrake", function()
+    local cv = GetConVar("tiv_deploy_handbrake")
+    if cv and not cv:GetBool() then return end
+    for idx, data in pairs(TIV.Deploy.Vehicles) do
+        if LOCKED_STATES[data.state] then
+            local veh = Entity(idx)
+            if IsValid(veh) and veh.SetHandbrake then
+                veh:SetHandbrake(true)
+                if veh.SetThrottle then veh:SetThrottle(0) end
+                data.handbrakeOn = true
+            end
+        end
+    end
+end)
+
 -- ============================================================================
 -- SPIKE RECONCILIATION
 -- ============================================================================
