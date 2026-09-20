@@ -1,410 +1,270 @@
+-- Viewmodel animation logic for the Juniez / MW2019 c_ models.
+-- Every sequence used here exists in the shipped models; anything is looked
+-- up per model and cached, and features whose sequences a model lacks are
+-- simply skipped for that model instead of playing sequence -1.
+
+AddCSLuaFile()
+
 local inspectableWeapons = {
-	["weapon_pistol"] = true,
-	["weapon_357"] = true,
-	["weapon_smg1"] = true,
-	["weapon_ar2"] = true,
-	["weapon_shotgun"] = true,
-	["weapon_crossbow"] = true,
-	["weapon_rpg"] = true,
-	["weapon_crowbar"] = true
+    weapon_pistol = true, weapon_357 = true, weapon_smg1 = true, weapon_ar2 = true,
+    weapon_shotgun = true, weapon_crossbow = true, weapon_rpg = true, weapon_crowbar = true,
 }
 
-local sprintableWeapons = {
-	["weapon_pistol"] = true,
-	["weapon_357"] = true,
-	["weapon_smg1"] = true,
-	["weapon_shotgun"] = true,
-	["weapon_crossbow"] = true,
-	["weapon_rpg"] = true,
-	["weapon_frag"] = true,
-	["weapon_stunstick"] = true,
-	["weapon_crowbar"] = true,
-	["weapon_physcannon"] = true,
-	["weapon_bugbait"] = true,
-	["weapon_ar2"] = true
+local swayWeapons = {
+    weapon_pistol = true, weapon_357 = true, weapon_smg1 = true, weapon_shotgun = true,
+    weapon_crossbow = true, weapon_rpg = true, weapon_frag = true, weapon_stunstick = true,
+    weapon_crowbar = true, weapon_physcannon = true, weapon_bugbait = true, weapon_ar2 = true,
 }
 
--- NEW: Weapons that support reload/reload_empty animation swapping
 local reloadableWeapons = {
-	["weapon_pistol"] = true,
-	["weapon_357"] = true,
-	["weapon_smg1"] = true,
-	["weapon_ar2"] = true,
-	["weapon_shotgun"] = true,
-	["weapon_crossbow"] = true,
-	["weapon_rpg"] = true
+    weapon_pistol = true, weapon_357 = true, weapon_smg1 = true, weapon_ar2 = true,
+    weapon_crossbow = true, weapon_rpg = true,
 }
 
-if SERVER then
-	hook.Add("KeyPress", "MMOD_Weapon_Inspect", function(ply, key)
-		if key != IN_RELOAD then return end
-		if !ply:Alive() then return end
+-- Only the grenade model ships sprint animations.
+local sprintableWeapons = { weapon_frag = true }
 
-		local wep = ply:GetActiveWeapon()
-		if !IsValid(wep) then return end
-
-		local class = wep:GetClass()
-		if !inspectableWeapons[class] then return end
-
-		local vm = ply:GetViewModel()
-		if !IsValid(vm) then return end
-
-		local seq = vm:GetSequence()
-		local seqinfo = vm:GetSequenceInfo(seq)
-
-		local vel = ply:GetVelocity():Length()
-		if vel > 10 then return end
-
-		if seqinfo.activityname == "ACT_VM_IDLE" then
-			if (!wep.MMOD_NextInspectTime) or (wep.MMOD_NextInspectTime and CurTime() > wep.MMOD_NextInspectTime) then
-				if wep:Clip1() == wep:GetMaxClip1() then
-				local seqToPlay = vm:LookupSequence("inspect"..tostring(math.random(1,2)))
-					if seqToPlay then
-					local dur = vm:SequenceDuration(seqToPlay)
-
-					wep:SetSaveValue("m_flTimeWeaponIdle", dur)
-					vm:SendViewModelMatchingSequence(seqToPlay)
-					wep.MMOD_NextInspectTime = CurTime() + dur
-
-					end
-				end
-			end
-		end
-	end)
+-- [model][name] = sequence id or false
+local seqCache = {}
+local function FindSequence(vm, name)
+    local mdl = vm:GetModel()
+    local perModel = seqCache[mdl]
+    if not perModel then
+        perModel = {}
+        seqCache[mdl] = perModel
+    end
+    local id = perModel[name]
+    if id == nil then
+        id = vm:LookupSequence(name)
+        if not id or id < 0 then id = false end
+        perModel[name] = id
+    end
+    return id
 end
 
-hook.Add("PlayerPostThink", "MMOD_AR2_Skin", function(ply)
-	if !ply:Alive() then return end
+local function PlaySequence(ply, wep, vm, seqId, idleDelay)
+    vm:SendViewModelMatchingSequence(seqId)
+    local dur = vm:SequenceDuration(seqId)
+    -- Keep the engine weapon from stomping the sequence with its own idle.
+    wep:SetSaveValue("m_flTimeWeaponIdle", CurTime() + (idleDelay or dur))
+    return dur
+end
 
-	local wep = ply:GetActiveWeapon()
-	if !IsValid(wep) then return end
+local function GetVM(ply)
+    if not IsValid(ply) or not ply:Alive() then return end
+    local wep = ply:GetActiveWeapon()
+    if not IsValid(wep) then return end
+    local vm = ply:GetViewModel()
+    if not IsValid(vm) then return end
+    return wep, vm, wep:GetClass()
+end
 
-	local class = wep:GetClass()
-	if class != "weapon_ar2" then return end
+if SERVER then
+    hook.Add("KeyPress", "MMOD_Weapon_Inspect", function(ply, key)
+        if key ~= IN_RELOAD then return end
+        local wep, vm, class = GetVM(ply)
+        if not wep or not inspectableWeapons[class] then return end
+        if ply:GetVelocity():LengthSqr() > 100 then return end
+        if wep.MMOD_NextInspectTime and CurTime() < wep.MMOD_NextInspectTime then return end
 
-	local vm = ply:GetViewModel()
-	if !IsValid(vm) then return end
+        local info = vm:GetSequenceInfo(vm:GetSequence())
+        if not info or info.activityname ~= "ACT_VM_IDLE" then return end
+        if wep:GetMaxClip1() > 0 and wep:Clip1() < wep:GetMaxClip1() then return end
 
-	local seq = vm:GetSequence()
-	local seqinfo = vm:GetSequenceInfo(seq)
+        local seq = FindSequence(vm, "inspect1")
+        if not seq then return end
+        local dur = PlaySequence(ply, wep, vm, seq)
+        wep.MMOD_NextInspectTime = CurTime() + dur
+    end)
 
-	local seqName = seqinfo.label
-	local cyc = vm:GetCycle()
+    -- One PlayerPostThink for every per-tick feature instead of five.
+    hook.Add("PlayerPostThink", "MMOD_ViewmodelLogic", function(ply)
+        local wep, vm, class = GetVM(ply)
+        if not wep then return end
 
-	if (string.find(seqName, "fire") and cyc < 0.2) or string.find(seqName, "shake") or (seqName == "inspect1" and cyc > 0.1 and cyc < 0.9) or (seqName == "inspect2" and cyc > 0.4 and cyc < 0.55)then
-		if vm:GetSkin() != 1 then
-			vm:SetSkin(1)
-		end
-	else
-		if vm:GetSkin() != 0 then
-			vm:SetSkin(0)
-		end
-	end
+        local info = vm:GetSequenceInfo(vm:GetSequence())
+        if not info then return end
+        local act = info.activityname
+        local label = info.label
+
+        -- Tactical vs empty reload: engine weapons only know ACT_VM_RELOAD.
+        if reloadableWeapons[class] then
+            if act == "ACT_VM_RELOAD" then
+                if not wep.MMOD_ReloadSwapped and vm:GetCycle() < 0.1 then
+                    wep.MMOD_ReloadSwapped = true
+                    local seq
+                    if wep.MMOD_ClipBeforeReload and wep.MMOD_ClipBeforeReload <= 0 then
+                        seq = FindSequence(vm, "reload_empty")
+                    end
+                    seq = seq or FindSequence(vm, "reload")
+                    if seq and seq ~= vm:GetSequence() then
+                        vm:SendViewModelMatchingSequence(seq)
+                    end
+                end
+            else
+                wep.MMOD_ReloadSwapped = false
+                -- Clip1 is already refilled by the time the reload sequence is
+                -- visible on some weapons, so remember the value from before.
+                wep.MMOD_ClipBeforeReload = wep:Clip1()
+            end
+        end
+
+        if sprintableWeapons[class] then
+            local speed = ply:GetVelocity():Length2D()
+            local moving = ply:KeyDown(IN_SPEED) and ply:OnGround() and not ply:Crouching()
+                and speed > ply:GetWalkSpeed() * 0.9
+            local sprinting = label == "sprint" or label == "sprint_in"
+
+            if moving and act == "ACT_VM_IDLE" and not sprinting then
+                local seqIn = FindSequence(vm, "sprint_in")
+                local seq = FindSequence(vm, "sprint")
+                if seq then
+                    PlaySequence(ply, wep, vm, seqIn or seq, 60)
+                    wep.MMOD_SprintLoopAt = seqIn and (CurTime() + vm:SequenceDuration(seqIn)) or nil
+                end
+            elseif sprinting then
+                if not moving then
+                    local seqOut = FindSequence(vm, "sprint_out") or FindSequence(vm, "idle")
+                    if seqOut then PlaySequence(ply, wep, vm, seqOut) end
+                    wep.MMOD_SprintLoopAt = nil
+                elseif wep.MMOD_SprintLoopAt and CurTime() >= wep.MMOD_SprintLoopAt then
+                    local seq = FindSequence(vm, "sprint")
+                    if seq then PlaySequence(ply, wep, vm, seq, 60) end
+                    wep.MMOD_SprintLoopAt = nil
+                end
+            elseif label == "sprint_out" and vm:GetCycle() >= 0.99 then
+                local idle = FindSequence(vm, "idle")
+                if idle then PlaySequence(ply, wep, vm, idle) end
+            end
+        end
+    end)
+
+    return
+end
+
+-- ---------------------------------------------------------------------------
+-- Client
+-- ---------------------------------------------------------------------------
+
+local cvStopSway = CreateClientConVar("mmod_replacements_stopsway", "0", true, true,
+    "Disable the default viewmodel sway (turn off to support viewmodel lagger and other CalcViewModelView scripts)", 0, 1)
+local cvLens = CreateClientConVar("mmod_replacements_lense", "1", true, true,
+    "Crossbow scope lens: 0 = black, 1 = refraction (small), 2 = refraction (full frame)", 0, 2)
+local cvOverlay = CreateClientConVar("mmod_replacements_crossbow_overlay", "1", true, true,
+    "Draw a scope overlay while zoomed with the crossbow", 0, 1)
+
+-- The AR2 model uses skin 1 for its lit muzzle/vent state during fire and
+-- inspect frames. Only the owner sees the viewmodel, so this is client-only.
+hook.Add("Think", "MMOD_AR2_Skin", function()
+    local ply = LocalPlayer()
+    if not IsValid(ply) then return end
+    local wep, vm, class = GetVM(ply)
+    if not wep or class ~= "weapon_ar2" then return end
+
+    local info = vm:GetSequenceInfo(vm:GetSequence())
+    if not info then return end
+    local label = info.label or ""
+    local cyc = vm:GetCycle()
+
+    local lit = (string.find(label, "fire", 1, true) and cyc < 0.2)
+        or (label == "inspect1" and cyc > 0.1 and cyc < 0.9)
+    local skin = lit and 1 or 0
+    if vm:GetSkin() ~= skin then vm:SetSkin(skin) end
 end)
 
-if SERVER then
+hook.Add("CalcViewModelView", "MMOD_Weapon_StopDefaultSway", function(wep, vm, oldPos, oldAng, pos, ang)
+    if not cvStopSway:GetBool() then return end
+    if not IsValid(wep) or not swayWeapons[wep:GetClass()] then return end
+    local ply = wep:GetOwner()
+    if not IsValid(ply) or ply:GetVelocity():LengthSqr() <= 1 then return end
+    if ply:GetNW2Int("TFALean", 0) ~= 0 then return end
+    return oldPos, oldAng
+end)
 
-	----------------------------------------------
-	-- NEW: Reload / Reload Empty Animation Swap--
-	----------------------------------------------
-
-	hook.Add("PlayerPostThink", "MMOD_Weapon_Reload", function(ply)
-		if !ply:Alive() then return end
-
-		local wep = ply:GetActiveWeapon()
-		if !IsValid(wep) then return end
-
-		local class = wep:GetClass()
-		if !reloadableWeapons[class] then return end
-
-		local vm = ply:GetViewModel()
-		if !IsValid(vm) then return end
-
-		local seq = vm:GetSequence()
-		local seqinfo = vm:GetSequenceInfo(seq)
-		local cyc = vm:GetCycle()
-
-		-- Detect when the base reload activity starts and swap the animation
-		if seqinfo.activityname == "ACT_VM_RELOAD" and cyc < 0.1 then
-			if !wep.MMOD_ReloadSwapped then
-				wep.MMOD_ReloadSwapped = true
-
-				local seqToPlay
-				if wep:Clip1() > 0 then
-					-- Tactical reload (still has ammo in clip)
-					seqToPlay = vm:LookupSequence("reload")
-				else
-					-- Empty reload (no ammo left in clip)
-					seqToPlay = vm:LookupSequence("reload_empty")
-				end
-
-				if seqToPlay and seqToPlay != -1 then
-					vm:SendViewModelMatchingSequence(seqToPlay)
-				end
-			end
-		else
-			wep.MMOD_ReloadSwapped = false
-		end
-	end)
-
-	hook.Add("PlayerPostThink", "MMOD_Weapon_Sprint", function(ply)
-		if !ply:Alive() then return end
-
-		local wep = ply:GetActiveWeapon()
-		if !IsValid(wep) then return end
-
-		local class = wep:GetClass()
-		if !sprintableWeapons[class] then return end
-
-		local vm = ply:GetViewModel()
-		if !IsValid(vm) then return end
-
-		local seq = vm:GetSequence()
-		local seqinfo = vm:GetSequenceInfo(seq)
-
-		local vel = ply:GetVelocity():Length()
-		local crouchspeed = ply:GetWalkSpeed() * ply:GetCrouchedWalkSpeed()
-
-		if seqinfo.activityname == "ACT_VM_IDLE" then
-			if sprintableWeapons[class] then
-			if (!wep.MMOD_NextSprintTime) or (wep.MMOD_NextSprintTime and CurTime() > wep.MMOD_NextSprintTime) then
-				if ply:KeyDown(IN_SPEED) and ply:OnGround() and vel >= crouchspeed and !ply:Crouching() then
-				local seqToPlay = vm:LookupSequence("sprint")
-					if seqToPlay then
-
-						local dur = vm:SequenceDuration(seqToPlay)
-						wep:SetSaveValue("m_flTimeWeaponIdle", 200)
-						vm:SendViewModelMatchingSequence(seqToPlay)
-						wep.MMOD_NextSprintTime = CurTime() + dur
-
-						else return false
-
-						end
-					end
-				end
-			end
-		elseif string.lower(seqinfo.label) == "sprint" then
-			if !ply:KeyDown(IN_SPEED) or !ply:OnGround() or vel < crouchspeed or ply:Crouching() then
-			local seqToPlay = vm:LookupSequence("idle01")
-				if seqToPlay then
-
-				local dur = vm:SequenceDuration(seqToPlay)
-				vm:SendViewModelMatchingSequence(seqToPlay)
-				wep.MMOD_NextSprintTime = CurTime() + 0.25
-
-				else return false
-
-				end
-			end
-		end
-	end)
-
-	hook.Add("PlayerPostThink", "MMOD_Weapon_Walk", function(ply)
-		if !ply:Alive() then return end
-
-		local wep = ply:GetActiveWeapon()
-		if !IsValid(wep) then return end
-
-		local class = wep:GetClass()
-		if !sprintableWeapons[class] then return end
-
-		local vm = ply:GetViewModel()
-		if !IsValid(vm) then return end
-
-		local seq = vm:GetSequence()
-		local seqinfo = vm:GetSequenceInfo(seq)
-
-		local vel = ply:GetVelocity():Length()
-		local crouchspeed = ply:GetWalkSpeed() * ply:GetCrouchedWalkSpeed()
-
-		if seqinfo.activityname == "ACT_VM_IDLE" then
-			if sprintableWeapons[class] then
-			if (!wep.MMOD_NextWalkTime) or (wep.MMOD_NextWalkTime and CurTime() > wep.MMOD_NextWalkTime) then
-				if ply:OnGround() and vel >= crouchspeed and !ply:Crouching() then
-				local seqToPlay = vm:LookupSequence("walk")
-					if seqToPlay then
-						
-						local dur = vm:SequenceDuration(seqToPlay)
-						wep:SetSaveValue("m_flTimeWeaponIdle", 200)
-						vm:SendViewModelMatchingSequence(seqToPlay)
-						wep.MMOD_NextWalkTime = CurTime() + dur
-
-						else return false
-
-						end
-					end
-				end
-			end
-		elseif string.lower(seqinfo.label) == "walk" then
-			if ply:Crouching() or !ply:OnGround() or vel < crouchspeed or (ply:KeyDown(IN_SPEED) and ply:OnGround() and vel >= 50) then
-			local seqToPlay = vm:LookupSequence("idle01")
-				if seqToPlay then
-
-				local dur = vm:SequenceDuration(seqToPlay)
-				vm:SendViewModelMatchingSequence(seqToPlay)
-				wep.MMOD_NextWalkTime = CurTime() + 0.25
-
-				else return false
-
-				end
-			end
-		end
-	end)
+-- The original overlay material was never shipped; the scope mask is drawn
+-- procedurally instead (circular view with vignette and hairline reticle).
+local circlePoly
+local function BuildCircle(cx, cy, r)
+    local poly = {}
+    local segs = 96
+    for i = 0, segs do
+        local a = math.rad(i / segs * 360)
+        poly[#poly + 1] = { x = cx + math.cos(a) * r, y = cy + math.sin(a) * r }
+    end
+    return poly
 end
 
----------------------------
---Crossbow Zoom Animation--
----------------------------
+hook.Add("HUDPaint", "MMOD_Weapon_CrossbowZoomOverlay", function()
+    if not cvOverlay:GetBool() then return end
+    local ply = LocalPlayer()
+    if not IsValid(ply) or not ply:Alive() then return end
+    local wep = ply:GetActiveWeapon()
+    if not IsValid(wep) or wep:GetClass() ~= "weapon_crossbow" then return end
+    if ply:GetFOV() >= 25 then return end
 
-if SERVER then
-	hook.Add("PlayerPostThink", "MMOD_CrossbowReloadZoom", function(ply)
-		if !ply:Alive() then return end
+    local w, h = ScrW(), ScrH()
+    local cx, cy, r = w / 2, h / 2, h * 0.46
 
-		local wep = ply:GetActiveWeapon()
-		if !IsValid(wep) then return end
+    -- Black outside the scope circle: stencil-mask the circle, fill the rest.
+    render.ClearStencil()
+    render.SetStencilEnable(true)
+    render.SetStencilWriteMask(255)
+    render.SetStencilTestMask(255)
+    render.SetStencilReferenceValue(1)
+    render.SetStencilCompareFunction(STENCIL_ALWAYS)
+    render.SetStencilPassOperation(STENCIL_REPLACE)
+    render.SetStencilFailOperation(STENCIL_KEEP)
+    render.SetStencilZFailOperation(STENCIL_KEEP)
 
-		local class = wep:GetClass()
-		if class != "weapon_crossbow" then return end
+    if not circlePoly or circlePoly.h ~= h then
+        circlePoly = BuildCircle(cx, cy, r)
+        circlePoly.h = h
+    end
+    draw.NoTexture()
+    surface.SetDrawColor(0, 0, 0, 1)
+    surface.DrawPoly(circlePoly)
 
-		local vm = ply:GetViewModel()
-		if !IsValid(vm) then return end
+    render.SetStencilCompareFunction(STENCIL_NOTEQUAL)
+    surface.SetDrawColor(0, 0, 0, 255)
+    surface.DrawRect(0, 0, w, h)
+    render.SetStencilEnable(false)
 
-		local seq = vm:GetSequence()
-		local seqinfo = vm:GetSequenceInfo(seq)
-	
-		local seqName = seqinfo.label
-		local cyc = vm:GetCycle()
-	
-		if ply:GetFOV() < 25 and (seqinfo.activityname == "ACT_VM_RELOAD" and cyc < 0.1) then
-			local seqToPlay = vm:LookupSequence("reload_zoomed")
-		
-			if seqToPlay then
+    -- Reticle
+    surface.SetDrawColor(20, 20, 20, 220)
+    surface.DrawRect(cx - r, cy, r * 2, 1)
+    surface.DrawRect(cx, cy - r, 1, r * 2)
+    surface.DrawOutlinedRect(cx - 6, cy - 6, 12, 12, 1)
+    for i = 1, 4 do
+        local off = i * r * 0.18
+        surface.DrawRect(cx + off, cy - 5, 1, 10)
+        surface.DrawRect(cx - off, cy - 5, 1, 10)
+        surface.DrawRect(cx - 5, cy + off, 10, 1)
+        surface.DrawRect(cx - 5, cy - off, 10, 1)
+    end
+    surface.DrawOutlinedRect(cx - r, cy - r, r * 2, r * 2, 0)
+end)
 
-			vm:SendViewModelMatchingSequence(seqToPlay)
-			wep.MMOD_CrossbowReload = true
-			
-			else return false
-			
-			end
-		end
-	end)
+local cbLens = Material("models/weapons/v_crossbow_new/v_crossbow_lens")
+local lensTextures = { ["0"] = "vgui/black", ["1"] = "_rt_SmallFB1", ["2"] = "_rt_FullFrameFB" }
+
+local function ApplyLens(_, _, newval)
+    if cbLens:IsError() then return end
+    local tex = lensTextures[tostring(newval)]
+    if tex then cbLens:SetTexture("$basetexture", tex) end
 end
 
------------------------------
---Shotgun Altfire Animation--
------------------------------
+cvars.RemoveChangeCallback("mmod_replacements_lense", "mmod_replacements_lense_id")
+cvars.AddChangeCallback("mmod_replacements_lense", ApplyLens, "mmod_replacements_lense_id")
+hook.Add("InitPostEntity", "MMOD_Weapon_CrossbowLenseConvarInit", function()
+    ApplyLens(nil, nil, cvLens:GetString())
+end)
 
-if SERVER then
-	hook.Add("PlayerPostThink", "MMOD_ShotgunAltFire", function(ply)
-		if !ply:Alive() then return end
-
-		local wep = ply:GetActiveWeapon()
-		if !IsValid(wep) then return end
-
-		local class = wep:GetClass()
-		if class != "weapon_shotgun" then return end
-
-		local vm = ply:GetViewModel()
-		if !IsValid(vm) then return end
-
-		local seq = vm:GetSequence()
-		local seqinfo = vm:GetSequenceInfo(seq)
-		
-		local cyc = vm:GetCycle()
-
-		if wep:GetClass() == "weapon_shotgun" and seqinfo.activityname == "ACT_VM_SECONDARYATTACK" then
-			wep.MMOD_ShotgunNormalShot = true
-		end
-
-		if wep.MMOD_ShotgunNormalShot and seqinfo.activityname == "ACT_VM_PRIMARYATTACK" then
-			local seqToPlay = vm:LookupSequence("pump")
-				if seqToPlay then
-
-				vm:SendViewModelMatchingSequence(seqToPlay)
-				wep.MMOD_ShotgunNormalShot = false
-
-			end
-		elseif wep.MMOD_ShotgunNormalShot and string.lower(seqinfo.label) == "pump" then
-			local seqToPlay = vm:LookupSequence("pump2_sighted")
-				if seqToPlay then
-
-				vm:SendViewModelMatchingSequence(seqToPlay)
-				wep.MMOD_ShotgunNormalShot = false
-
-			end
-		end
-	end)
-end
-
-if CLIENT then
-	CreateClientConVar("mmod_replacements_stopsway", 0, {FCVAR_ARCHIVE, FCVAR_REPLICATED, FCVAR_USERINFO}, "Disable to support viewmodel lagger and other calcvmview scripts")
-	CreateClientConVar("mmod_replacements_lense", 1, {FCVAR_ARCHIVE, FCVAR_REPLICATED, FCVAR_USERINFO}, "Add a refraction overlay for crossbow scope")
-	CreateClientConVar("mmod_replacements_crossbow_overlay", 1, {FCVAR_ARCHIVE, FCVAR_REPLICATED, FCVAR_USERINFO}, "Adds an overlay for crossbow scope")
-
-	hook.Add("CalcViewModelView", "MMOD_Weapon_StopDefaultSway", function(wep, vm, oldPos, oldAng, pos, ang)
-		local ply = wep:GetOwner()
-		if sprintableWeapons[wep:GetClass()] and IsValid(ply) and ply:GetVelocity():Length() > 1 and GetConVar("mmod_replacements_stopsway"):GetInt() == 1 then
-			local can = true
-			local leaning = ply:GetNW2Int("TFALean", 0) != 0
-
-			if leaning then can = false end
-
-			if can then
-				return oldPos, oldAng
-			end
-		end
-	end)
-
-	local cbScope = Material("vgui/scopes/hl2mmod_scopes_crossbow")
-
-	hook.Add("RenderScreenspaceEffects", "MMOD_Weapon_CrossbowZoomOverlay", function()
-		local ply = LocalPlayer()
-
-		local wep = ply:GetActiveWeapon()
-		if !IsValid(wep) then return end
-
-		if GetConVar("mmod_replacements_crossbow_overlay"):GetInt() == 1 then
-			if ply:Alive() and wep:GetClass() == "weapon_crossbow" then
-				if ply:GetFOV() < 25 then
-					cam.Start2D()
-						local w, h = ScrW(), ScrH()
-
-						local start1 = w/2-h/2
-
-						surface.SetDrawColor(255, 255, 255, 255)
-						surface.SetMaterial(cbScope)
-						surface.DrawTexturedRect(start1, 0, h, h)
-
-						surface.SetDrawColor(0, 0, 0, 255)
-						surface.DrawRect(0, 0, start1, h)
-
-						surface.DrawRect(w-start1, 0, w, h)
-
-						surface.DrawRect(-1, -1, w + 2, 2)
-
-						surface.DrawRect(-1, -1, 2, h + 2)
-					cam.End2D()
-				end
-			end
-		end
-	end)
-
-	local cbLense = Material("models/weapons/v_crossbow/lens")
-
-	local function mmod_replacements_lense_cvar_func(name, oldval, newval)
-		if newval == "0" then
-			cbLense:SetTexture("$basetexture", "vgui/black")
-		elseif newval == "1" then
-			cbLense:SetTexture("$basetexture", "_rt_SmallFB1")
-		elseif newval == "2" then
-			cbLense:SetTexture("$basetexture", "_rt_FullFrameFB")
-		end
-	end
-
-	cvars.RemoveChangeCallback("mmod_replacements_lense", "mmod_replacements_lense_id")
-	cvars.AddChangeCallback("mmod_replacements_lense", mmod_replacements_lense_cvar_func, "mmod_replacements_lense_id")
-
-	hook.Add("InitPostEntity", "MMOD_Weapon_CrossbowLenseConvarInit", function()
-		mmod_replacements_lense_cvar_func(nil, nil, GetConVar("mmod_replacements_lense"):GetString())
-	end)
-end
+hook.Add("PopulateToolMenu", "MMOD_Replacements_Menu", function()
+    spawnmenu.AddToolMenuOption("Options", "Player", "MMOD_Replacements", "MW2019 Viewmodels", "", "", function(panel)
+        panel:ClearControls()
+        panel:CheckBox("Disable default viewmodel sway", "mmod_replacements_stopsway")
+        panel:CheckBox("Crossbow scope overlay", "mmod_replacements_crossbow_overlay")
+        panel:NumSlider("Crossbow lens mode", "mmod_replacements_lense", 0, 2, 0)
+        panel:NumSlider("Viewmodel FOV (0 = untouched)", "mmod_replacements_viewmodel_fov", 0, 120, 0)
+    end)
+end)

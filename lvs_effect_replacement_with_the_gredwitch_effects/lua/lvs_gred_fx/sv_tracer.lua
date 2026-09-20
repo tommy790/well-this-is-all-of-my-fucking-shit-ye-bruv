@@ -81,10 +81,12 @@ local function ComputeEndpoint(pos, dir, velocity, enableBallistics, filter)
     end
 
     local grav = physenv.GetGravity() or Vector(0, 0, -600)
+    -- 24 arc segments is enough for a visual endpoint; the old 48 doubled the
+    -- trace cost for every ballistic MG round.
     local t, dt = 0, math.min(99999 / speed / 24, 0.25)
     local prev = pos
 
-    for i = 1, 48 do
+    for i = 1, 24 do
         t = t + dt
         local cur = pos + dir * speed * t + grav * (t * t * 0.5)
         local tr = util.TraceLine({ start = prev, endpos = cur, filter = filter, mask = mask })
@@ -138,16 +140,31 @@ end
 
 local function TryOverrideFireBullet()
     if not LVS or not LVS.FireBullet then
-        timer.Simple(0.5, TryOverrideFireBullet)
+        -- LVS not mounted yet; poll a few times instead of forever.
+        LVS_GRED_FX_SV._retries = (LVS_GRED_FX_SV._retries or 0) + 1
+        if LVS_GRED_FX_SV._retries <= 20 then
+            timer.Simple(0.5, TryOverrideFireBullet)
+        end
         return
     end
 
-    if LVS_GRED_FX_SV._patched then return end
-    LVS_GRED_FX_SV._patched = true
+    -- Guard against double wrapping across autorefresh: the original is kept
+    -- from the first patch, so a reload re-wraps the original, not our wrapper.
+    if LVS.FireBullet == LVS_GRED_FX_SV._wrapper then return end
+    if not LVS_GRED_FX_SV._originalFireBullet or LVS.FireBullet ~= LVS_GRED_FX_SV._wrapper then
+        LVS_GRED_FX_SV._originalFireBullet = LVS.FireBullet
+    end
 
-    LVS_GRED_FX_SV._originalFireBullet = LVS.FireBullet
+    -- Only useful when the Gredwitch base owns the tracer net channel.
+    if not gred then
+        if not LVS_GRED_FX_SV._warnedNoGred then
+            LVS_GRED_FX_SV._warnedNoGred = true
+            print("[lvs_gred_fx] Gredwitch base not found on the server; LVS tracers keep their native visual.")
+        end
+        return
+    end
 
-    function LVS:FireBullet(data)
+    LVS_GRED_FX_SV._wrapper = function(self, data)
         -- Run the real LVS bullet logic untouched (damage/ballistics/network).
         LVS_GRED_FX_SV._originalFireBullet(self, data)
 
@@ -159,6 +176,8 @@ local function TryOverrideFireBullet()
             ErrorNoHalt("[lvs_gred_fx] server tracer relay failed\n")
         end
     end
+    LVS.FireBullet = LVS_GRED_FX_SV._wrapper
+    LVS_GRED_FX_SV._patched = true
 end
 
 hook.Add("InitPostEntity", "lvs_gred_fx_server_tracer", TryOverrideFireBullet)

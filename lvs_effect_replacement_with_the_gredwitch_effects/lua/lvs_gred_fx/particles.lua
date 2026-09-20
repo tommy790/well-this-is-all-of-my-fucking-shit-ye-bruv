@@ -57,6 +57,17 @@ local function worldHost()
     return nil
 end
 
+-- CNewParticleEffect handles are not entities: the global IsValid() returns
+-- false for them, so every module validates through this helper.
+function LVS_GRED_FX.PsysValid(psys)
+    if not psys or psys == true then return false end
+    if psys.IsValid then
+        local ok, valid = pcall(psys.IsValid, psys)
+        return ok and valid == true
+    end
+    return false
+end
+
 local function SafeStop(psys, clear)
     if not psys or not psys.StopEmission then return end
     pcall(function() psys:StopEmission(false, clear == true) end)

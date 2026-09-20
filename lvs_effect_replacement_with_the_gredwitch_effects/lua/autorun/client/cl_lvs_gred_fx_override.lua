@@ -45,11 +45,18 @@ local MODULES = {
     "lvs_gred_fx/bridge.lua",
 }
 
+-- Modules are included exactly once per Lua state; re-application passes
+-- (late-registered LVS effects, OnReloaded) only re-wrap effect tables. The
+-- old version re-included every module on each of its five passes, which
+-- recreated timers and reset every module's caches.
+local effectNames
 local function includeModules()
+    if effectNames then return effectNames end
     for _, file in ipairs(MODULES) do
         include(file)
     end
-    return include("lvs_gred_fx/effect_list.lua")
+    effectNames = include("lvs_gred_fx/effect_list.lua")
+    return effectNames
 end
 
 local function isEnabled()
@@ -284,6 +291,10 @@ local function registerOverride(effectName)
 
     captureOriginal(effectName)
 
+    -- Already wrapped and still the active registration: nothing to do.
+    local current = effects.Get and effects.Get(effectName)
+    if istable(current) and current[OVERRIDE_MARKER] then return end
+
     local EFFECT = {}
     EFFECT[OVERRIDE_MARKER] = true
     EFFECT._lvs_gred_effect_name = effectName
@@ -391,11 +402,10 @@ end
 
 hook.Add("InitPostEntity", "lvs_gred_fx_override_effects", applyOverrides)
 hook.Add("OnReloaded", "lvs_gred_fx_override_effects", applyOverrides)
--- Late passes: some LVS/vehicle addons register their effects after the
--- client autorun; late passes ensure our exact-name replacements remain the
--- active registered effects.
+-- Late passes: some vehicle addons register their effects after client
+-- autorun. registerOverride skips names that are already wrapped, so the
+-- passes are cheap.
 timer.Simple(0, applyOverrides)
-timer.Simple(1, applyOverrides)
 timer.Simple(5, applyOverrides)
 
 --[[---------------------------------------------------------------------------

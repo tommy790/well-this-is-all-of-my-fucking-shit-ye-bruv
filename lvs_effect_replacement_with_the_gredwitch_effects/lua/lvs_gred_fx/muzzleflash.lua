@@ -276,8 +276,8 @@ function LVS_GRED_FX_MUZZLEFLASH.SpawnHaubitzeBeam(muzzlePos, dir)
     local endpos = tr.HitPos or (muzzlePos + dir * 20000)
 
     local psys = LVS_GRED_FX.SpawnWorld(pcf, muzzlePos, dir:Angle(), 0.5, true)
-    if psys and IsValid(psys) then
-        pcall(function() psys:SetControlPoint(1, endpos) end)
+    if LVS_GRED_FX.PsysValid(psys) then
+        psys:SetControlPoint(1, endpos)
     end
 end
 

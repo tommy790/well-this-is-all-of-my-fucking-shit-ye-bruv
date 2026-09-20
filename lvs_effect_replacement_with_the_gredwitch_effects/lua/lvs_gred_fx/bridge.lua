@@ -153,7 +153,7 @@ function LVS_GRED_FX.Stop(name, self)
         LVS_GRED_FX_TRACER.Stop(self)
     end
 
-    if self._psys and IsValid(self._psys) then
+    if LVS_GRED_FX.PsysValid(self._psys) then
         pcall(function() self._psys:StopEmission(false, false) end)
         self._psys = nil
     end

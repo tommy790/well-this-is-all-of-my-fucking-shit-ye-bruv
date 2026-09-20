@@ -42,7 +42,7 @@ function LVS_GRED_FX_TRAILS.InitEntTrail(name, self, data)
 
     local ok, psys = pcall(CreateParticleSystem, ent, pcf, PATTACH_ABSORIGIN_FOLLOW, 0, t.offset)
 
-    if ok and IsValid(psys) then
+    if ok and LVS_GRED_FX.PsysValid(psys) then
         self._psys = psys
         return true
     end
@@ -51,11 +51,11 @@ function LVS_GRED_FX_TRAILS.InitEntTrail(name, self, data)
 end
 
 function LVS_GRED_FX_TRAILS.ThinkEntTrail(self)
-    if cfg.Enabled() and IsValid(self._gent) and self._psys and IsValid(self._psys) then
+    if cfg.Enabled() and IsValid(self._gent) and LVS_GRED_FX.PsysValid(self._psys) then
         if (self._gdie or 0) > 0 and CurTime() >= self._gdie then
             -- Optional hard lifetime (e.g. fire trails that must end before
             -- the burning body is removed).
-            if self._psys and IsValid(self._psys) then
+            if LVS_GRED_FX.PsysValid(self._psys) then
                 pcall(function() self._psys:StopEmission(false, false) end)
                 self._psys = nil
             end
@@ -64,7 +64,7 @@ function LVS_GRED_FX_TRAILS.ThinkEntTrail(self)
         return true
     end
 
-    if self._psys and IsValid(self._psys) then
+    if LVS_GRED_FX.PsysValid(self._psys) then
         pcall(function() self._psys:StopEmission(false, false) end)
         self._psys = nil
     end
@@ -94,7 +94,7 @@ function LVS_GRED_FX_TRAILS.InitFireTrail(name, self, data)
 
     local ok, psys = pcall(CreateParticleSystem, ent, pcf, PATTACH_ABSORIGIN_FOLLOW, 0, offset)
 
-    if ok and IsValid(psys) then
+    if ok and LVS_GRED_FX.PsysValid(psys) then
         self._psys = psys
 
         -- LVS sets the lifetime via data:GetMagnitude() (time until boom);
@@ -126,7 +126,7 @@ function LVS_GRED_FX_TRAILS.InitEntFire(name, self, data)
 
     -- Replace any previous fire on this entity (LVS re-fires periodically).
     local prev = FIRE_ACTIVE[ent]
-    if prev and prev.psys and IsValid(prev.psys) then
+    if prev and LVS_GRED_FX.PsysValid(prev.psys) then
         pcall(function() prev.psys:StopEmission(false, true) end)
         FIRE_ACTIVE[ent] = nil
     end
@@ -136,7 +136,7 @@ function LVS_GRED_FX_TRAILS.InitEntFire(name, self, data)
 
     local ok, psys = pcall(CreateParticleSystem, ent, pcf, PATTACH_ABSORIGIN_FOLLOW, 0, offset)
 
-    if ok and IsValid(psys) then
+    if ok and LVS_GRED_FX.PsysValid(psys) then
         LVS_GRED_FX.StopAfter(psys, 1.5, false)
         FIRE_ACTIVE[ent] = { psys = psys }
         return true
@@ -162,7 +162,7 @@ function LVS_GRED_FX_TRAILS.InitAmmoRack(name, self, data)
     local prev = AMMORACK_ACTIVE[ent]
     if prev then
         -- Already burning; keep the existing jet alive.
-        if IsValid(prev.psys) then
+        if LVS_GRED_FX.PsysValid(prev.psys) then
             prev.expires = CurTime() + 2
             return true
         end
@@ -174,7 +174,7 @@ function LVS_GRED_FX_TRAILS.InitAmmoRack(name, self, data)
 
     local ok, psys = pcall(CreateParticleSystem, ent, pcf, PATTACH_ABSORIGIN_FOLLOW, 0, offset)
 
-    if ok and IsValid(psys) then
+    if ok and LVS_GRED_FX.PsysValid(psys) then
         LVS_GRED_FX.StopAfter(psys, 2.2, false)
         AMMORACK_ACTIVE[ent] = { psys = psys, expires = CurTime() + 2 }
         return true
