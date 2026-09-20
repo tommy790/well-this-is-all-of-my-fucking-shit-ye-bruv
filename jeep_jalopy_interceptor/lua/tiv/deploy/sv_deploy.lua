@@ -118,7 +118,7 @@ function TIV.Deploy.IsDriveLocked(veh)
     return data ~= nil and LOCKED_STATES[data.state] == true
 end
 
-local DRIVE_BUTTONS = bit.bor(IN_FORWARD, IN_BACK, IN_MOVELEFT, IN_MOVERIGHT, IN_JUMP, IN_SPEED, IN_DUCK)
+local DRIVE_BUTTONS = bit.bor(IN_FORWARD, IN_BACK, IN_MOVELEFT, IN_MOVERIGHT, IN_JUMP, IN_SPEED)
 
 hook.Add("StartCommand", "TIV_DriveLock", function(ply, cmd)
     local seat = ply:GetVehicle()
