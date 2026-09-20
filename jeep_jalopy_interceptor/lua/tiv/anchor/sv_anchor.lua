@@ -50,32 +50,42 @@ end
 function TIV.Anchor.PlantSingle(veh, data, spikeData)
     if not IsValid(veh) or not IsValid(spikeData.entity) then return end
     local spike = spikeData.entity
+    local pos, ang = spike:GetPos(), spike:GetAngles()
 
-    if IsValid(spike:GetParent()) then
-        local pos, ang = spike:GetPos(), spike:GetAngles()
-        spike:SetParent(nil)
-        spike:SetPos(pos)
-        spike:SetAngles(ang)
-    end
-    spike:SetMoveType(MOVETYPE_VPHYSICS)
-
+    -- The spike sits below the surface on purpose. It must never be simulated
+    -- as a live body there or the solver ejects it: freeze first, then
+    -- unparent, then hand the (already frozen) physics object its position.
     local sp = spike:GetPhysicsObject()
     if IsValid(sp) then
+        sp:EnableMotion(false)
         sp:EnableGravity(false)
+    end
+    spike:SetCollisionGroup(COLLISION_GROUP_WORLD)
+
+    if IsValid(spike:GetParent()) then
+        spike:SetParent(nil)
+    end
+    spike:SetMoveType(MOVETYPE_VPHYSICS)
+    spike:SetPos(pos)
+    spike:SetAngles(ang)
+    if IsValid(sp) then
+        sp:SetPos(pos)
+        sp:SetAngles(ang)
         sp:SetVelocity(vector_origin)
         sp:SetAngleVelocity(vector_origin)
         sp:EnableMotion(false)
     end
 
-    -- Welded to the world: this is what actually holds it in the ground, the
-    -- motion flag above is only a solver shortcut. An unfreeze leaves it put.
+    -- Welded to the world: this is what holds it in the ground; the motion
+    -- flag is only a solver shortcut. A weld to a frozen body is not solved,
+    -- so it cannot generate a penetration push either.
     local groundWeld = constraint.Weld(spike, game.GetWorld(), 0, 0, 0, true, false)
     if IsValid(groundWeld) then Track(data, groundWeld, spikeData, "groundweld") end
 
     local nocol = constraint.NoCollide(veh, spike, 0, 0)
     if IsValid(nocol) then Track(data, nocol, spikeData, "nocollide") end
 
-    spikeData.plantedPos = spike:GetPos()
+    spikeData.plantedPos = pos
     spikeData.phase = "deployed"
 end
 

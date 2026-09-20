@@ -495,7 +495,6 @@ function TIV.SpikeAnim.DeployToGround(veh, data, callback)
                     if not ok2 then tick() return end
                     sd.phase = "deployed"
                     data.spikeAnims[sd.index] = "deployed"
-                    spike:SetCollisionGroup(COLLISION_GROUP_WORLD)
                     TIV.Anchor.PlantSingle(veh, data, sd)
                     SendPhase(veh, sd.index, "deployed")
                     tick()
