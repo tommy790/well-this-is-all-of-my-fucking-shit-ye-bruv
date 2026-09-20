@@ -41,7 +41,8 @@ function ENT:InitializeServerSide()
 
 	self:SetBlastDamage( 150 )
 	self:SetBlastRadius( 300 )
-	self:SetHealth(9999999999)
+	self:SetMaxHealth( 1 )
+	self:SetHealth( 1 )
 
 	if IsValid( self:GetOwner() ) then
 		self:EmitSound( self.DeploySound )
@@ -62,17 +63,13 @@ function ENT:WarningThink()
 end
 
 function ENT:PowerupThink()
+	local owner = self:GetOwner()
+	if IsValid( owner ) then
+		self:SetTripmineOwner( owner )
+		self:SetPosOwner( owner:GetPos() )
+		self:SetAngleOwner( owner:GetAngles() )
+	end
 
-		local tr = util.TraceLine({
-			start = self:GetPos() + self:GetBeamDir(),
-			endpos = self:GetPos() - self:GetBeamDir(),
-			filter = self,
-			mask = MASK_SHOT_HULL
-		})
-		self:SetTripmineOwner( self:GetOwner() )
-		self:SetPosOwner( self:GetOwner():GetPos() )
-		self:SetAngleOwner( self:GetOwner():GetAngles() )
- 
 	if CurTime() > self:GetPowerUp() then
 
 		-- make solid
@@ -144,9 +141,6 @@ function ENT:MakeBeam()
 end
 
 function ENT:BeamBreakThink()
-
-	local bBlowup = 0;
-
 	local tr = util.TraceLine({
 		start = self:GetPos(),
 		endpos = self:GetBeamEnd(),
@@ -156,39 +150,32 @@ function ENT:BeamBreakThink()
 
 	if !IsValid( self:GetBeam() ) then
 		self:MakeBeam()
-		if tr.Entity then
-			self:SetTripmineOwner( tr.Entity )
-		end
-	end
-	
-	/* if math.abs( self:GetBeamLength() - tr.Fraction ) > 0.001 then
-		self:Explode()
-	end */
-	if (tr.Hit && (IsValid(tr.Entity:GetPhysicsObject())) && ( (tr.Entity:IsNPC()) || (tr.Entity:IsPlayer()) || (tr.Entity:IsNextBot())) ) then
-		self:Explode()
 	end
 
-	/*if (bBlowup == 1) then
-		self:SetOwner( self:GetRealOwner() )
-		self:SetHealth(0)
-
-		local dmginfo = DamageInfo()
-		
-		if IsValid( self:GetOwner() ) then
-			dmginfo:SetInflictor( self:GetOwner() )
-			dmginfo:SetAttacker( self:GetOwner() )
-		end
-		
-		self:Event_Killed( dmginfo )
+	local ent = tr.Entity
+	if tr.Hit && IsValid( ent ) && ( ent:IsNPC() || ent:IsPlayer() || ent:IsNextBot() ) then
+		self:Explode()
 		return
-	end */
+	end
 
-	self:NextThink( CurTime() + 0.01 )
+	-- Beam blocked/shortened by a prop or door: HL1 behaviour, trips the mine.
+	if math.abs( self:GetBeamLength() - tr.Fraction ) > 0.01 && tr.Fraction < self:GetBeamLength() then
+		self:Explode()
+		return
+	end
+
+	self:NextThink( CurTime() + 0.05 )
 end
 
 function ENT:OnTakeDamage( dmginfo )
+	if self.dying then return end
+	self.dying = true
+	local attacker = dmginfo:GetAttacker()
+	if IsValid( attacker ) && attacker:IsPlayer() then
+		self:SetOwner( attacker )
+	end
 	timer.Simple(0.2, function()
-		if (self:IsValid()) then self:Explode() end
+		if IsValid( self ) then self:Explode() end
 	end)
 end
 
@@ -206,29 +193,28 @@ function ENT:Event_Killed( dmginfo )
 end
 
 function ENT:DelayDeathThink()
-
-	self:KillBeam();
-	local tr = util.TraceLine({
-		start = self:GetPos() + self:GetBeamDir() * 8,
-		endpos = self:GetPos() - self:GetBeamDir() * 64,
-		filter = self,
-		mask = MASK_SHOT_HULL
-	})
-	
+	self:KillBeam()
 	self:Explode()
 end
 
 function ENT:Explode()
-	local pos = self:WorldSpaceCenter()
+	if self.exploded then return end
+	self.exploded = true
 
 	local explo = ents.Create("env_explosion")
-	explo:SetOwner(self:GetOwner())
-	explo:SetPos(pos)
-	explo:SetKeyValue("iMagnitude", 100)
-	explo:SetKeyValue("spawnflags", 32)
-	explo:Spawn()
-	explo:Activate()
-	explo:Fire("Explode")
+	if IsValid( explo ) then
+		explo:SetPos( self:WorldSpaceCenter() )
+		local owner = self:GetRealOwner()
+		if !IsValid( owner ) then owner = self:GetOwner() end
+		if IsValid( owner ) then explo:SetOwner( owner ) end
+		explo:SetKeyValue( "iMagnitude", tostring( self:GetBlastDamage() ) )
+		explo:SetKeyValue( "iRadiusOverride", tostring( self:GetBlastRadius() ) )
+		explo:SetKeyValue( "spawnflags", "32" )
+		explo:Spawn()
+		explo:Activate()
+		explo:Fire( "Explode" )
+		explo:Fire( "Kill", "", 1 )
+	end
 
 	self:Remove()
 end
