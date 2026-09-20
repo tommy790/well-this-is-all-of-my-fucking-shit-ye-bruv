@@ -167,6 +167,20 @@ function TIV.Anchor.UpdatePullDown(data, frac)
     end
 end
 
+-- frac 0..1 of the raise stroke; the stretch-only springs act as a ceiling
+-- that is let out gradually, so the suspension rebounds at hydraulic speed.
+function TIV.Anchor.UpdateRaise(data, frac, riseAmount)
+    local pd = data.pullDown
+    if not pd then return end
+    local ease = frac * frac * (3 - 2 * frac)
+    local extend = (riseAmount + pd.overshoot) * ease
+    for _, e in ipairs(pd.elastics) do
+        if IsValid(e.con) then
+            e.con:Fire("SetSpringLength", tostring(e.restLength + extend))
+        end
+    end
+end
+
 local function RemoveByType(data, wanted)
     for i = #(data.constraints or {}), 1, -1 do
         local c = data.constraints[i]

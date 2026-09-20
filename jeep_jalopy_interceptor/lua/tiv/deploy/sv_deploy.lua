@@ -335,15 +335,25 @@ end
 -- ============================================================================
 -- RETRACT
 -- ============================================================================
+-- Springs are let out over LowerTime so the suspension comes back up at the
+-- same rate it went down instead of snapping to ride height.
 function TIV.Deploy.RaiseVehicle(ply, veh)
     if not IsValid(veh) then return end
     local data = TIV.Deploy.GetState(veh)
     SetState(veh, data, "raising")
-    TIV.Anchor.DetachAll(veh, data)
+    TIV.Anchor.ReleaseLock(veh, data)
+    TIV.Anchor.UnfreezeForDeploy(veh)
 
-    local timerName = "TIV_Raise_" .. veh:EntIndex()
-    timer.Create(timerName, RAISE_SETTLE / SpeedMult(), 1, function()
+    if not data.pullDown then TIV.Anchor.StartPullDown(veh, data, 0) end
+    local riseAmount = data.lowerAmount or TIV.Deploy.GetSuspensionLimit(veh)
+    local raiseTime  = (TIV.Config.LowerTime or 1) / SpeedMult()
+    local startTime  = CurTime()
+    local timerName  = "TIV_Raise_" .. veh:EntIndex()
+
+    local function Finish()
+        timer.Remove(timerName)
         if not IsValid(veh) or data.state ~= "raising" then return end
+        TIV.Anchor.DetachAll(veh, data)
         data.anchored   = false
         data.plantedPos = nil
         if TIV.Loft and TIV.Loft.SetAnchoredImmunity then TIV.Loft.SetAnchoredImmunity(veh, false) end
@@ -354,6 +364,24 @@ function TIV.Deploy.RaiseVehicle(ply, veh)
             print("[TIV] Spikes lost during retract, recreating...")
             data.spikesCreated = false
             TIV.Deploy.EnsureSpikes(veh, data)
+        end
+    end
+
+    if not data.pullDown or #data.pullDown.elastics == 0 then
+        timer.Create(timerName, RAISE_SETTLE / SpeedMult(), 1, Finish)
+        return
+    end
+
+    timer.Create(timerName, 0.02, 0, function()
+        if not IsValid(veh) or data.state ~= "raising" then
+            timer.Remove(timerName)
+            return
+        end
+        local frac = math.Clamp((CurTime() - startTime) / raiseTime, 0, 1)
+        TIV.Anchor.UpdateRaise(data, frac, riseAmount)
+        if frac >= 1 then
+            timer.Remove(timerName)
+            timer.Simple(RAISE_SETTLE / SpeedMult(), Finish)
         end
     end)
 end
@@ -430,6 +458,7 @@ end
 function TIV.Deploy.ReverseToRaising(veh, data)
     if not IsValid(veh) or not data then return end
     timer.Remove("TIV_Raise_" .. veh:EntIndex())
+    TIV.Anchor.ReleaseSprings(veh, data)
     TIV.Deploy.StartDeploy(nil, veh)
 end
 
