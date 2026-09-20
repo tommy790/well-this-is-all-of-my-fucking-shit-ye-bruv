@@ -122,7 +122,8 @@ progression are untouched.
 
 **Preserved:** every public `TIV.Deploy/Anchor/Spikes/SpikeAnim/Loft` function name
 (verified by grepping every reference in the repo against definitions), state names
-(`idle`, `deploying_spikes`, `lowering`, `anchored`, `retracting`, `raising`, `lofted`),
+(`idle`, `lowering`, `deploying_spikes`, `anchored`, `retracting`, `raising`, `lofted` —
+the order the wire/E2 docs always described),
 nets (`TIV_DeployRequest`, `TIV_DeployStatus`, `TIV_SpikeAnim*`, `TIV_LoftEvent`,
 `TIV_AnchorWarning`), hooks (`TIV_StateChanged`, `TIV_VehicleRemoved`,
 `TIV_SpikeFailure`, `TIV_LoftEvent`), timer names other modules cancel
@@ -133,9 +134,17 @@ nets (`TIV_DeployRequest`, `TIV_DeployStatus`, `TIV_SpikeAnim*`, `TIV_LoftEvent`
 **Replaced (why):**
 - Lowering used to `SetPos`-lerp the chassis every tick with motion frozen, which is
   the fake-movement approach that produced the jitter/teleport instability. Now the
-  chassis is never frozen or moved by code. Lowering is `constraint.Elastic` veh→spike
-  per spike whose rest length is shortened over `LowerTime` (`data.pullDown`), so the
-  suspension actually compresses under a physical pull.
+  chassis is never frozen or moved by code. Airbags go first: `constraint.Elastic`
+  springs from each spike mount (or four chassis corners when no spikes are fitted) to
+  the ground directly below, whose rest length is shortened over `LowerTime`
+  (`data.pullDown`). The suspension compresses under a physical pull, then the spikes
+  drive in from the lowered pose, the ballsockets lock, and the springs are released.
+  Retract mirrors it: springs hold the pose while the pistons withdraw, then
+  `RaiseVehicle` drops everything and the suspension comes back up on its own.
+- Zero spikes (player removed them all / `tiv_spike_group_*` all off): lowering still
+  works because the springs target the ground, and the anchored hold is a limited
+  world ballsocket (`AttachWorld`, `isWorldAnchor`). Loft/failure then treats the
+  vehicle as having a single anchor that fails at the wind threshold.
 - Anchored state is an `AdvBallsocket` per spike limited to ±`AnchorPivotLimit`
   (28°) with `BallSocketForceLimit`; zero-spike mode uses a world ballsocket
   (`isWorldAnchor`). Storm forces act on a real constrained body, so failure
