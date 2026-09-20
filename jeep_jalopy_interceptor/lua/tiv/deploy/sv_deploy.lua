@@ -101,6 +101,36 @@ local function ReleaseHandbrake(veh)
 end
 TIV.Deploy.ReleaseHandbrake = ReleaseHandbrake
 
+-- Driving is blocked from the first frame of lowering until the vehicle is
+-- idle again. The handbrake alone is not enough on prop_vehicle_jeep: the
+-- engine still pushes against it, so the driver's inputs are dropped too.
+local LOCKED_STATES = {
+    lowering         = true,
+    deploying_spikes = true,
+    anchored         = true,
+    retracting       = true,
+    raising          = true,
+}
+TIV.Deploy.LockedStates = LOCKED_STATES
+
+function TIV.Deploy.IsDriveLocked(veh)
+    local data = TIV.Deploy.Vehicles[veh:EntIndex()]
+    return data ~= nil and LOCKED_STATES[data.state] == true
+end
+
+local DRIVE_BUTTONS = bit.bor(IN_FORWARD, IN_BACK, IN_MOVELEFT, IN_MOVERIGHT, IN_JUMP, IN_SPEED, IN_DUCK)
+
+hook.Add("StartCommand", "TIV_DriveLock", function(ply, cmd)
+    local seat = ply:GetVehicle()
+    if not IsValid(seat) then return end
+    local veh = TIV.Deploy.IsJeep(seat) and seat or seat:GetParent()
+    if not IsValid(veh) or not TIV.Deploy.IsDriveLocked(veh) then return end
+    cmd:SetForwardMove(0)
+    cmd:SetSideMove(0)
+    cmd:SetUpMove(0)
+    cmd:SetButtons(bit.band(cmd:GetButtons(), bit.bnot(DRIVE_BUTTONS)))
+end)
+
 -- ============================================================================
 -- SPIKE RECONCILIATION
 -- ============================================================================
@@ -262,6 +292,8 @@ end
 local function StartLowering(veh, data)
     if not IsValid(veh) then return end
     SetState(veh, data, "lowering")
+    ApplyHandbrake(veh)
+    if veh.SetThrottle then veh:SetThrottle(0) end
 
     local lowerAmount = TIV.Deploy.GetSuspensionLimit(veh)
     data.lowerAmount = lowerAmount
@@ -357,6 +389,7 @@ function TIV.Deploy.RaiseVehicle(ply, veh)
         data.anchored   = false
         data.plantedPos = nil
         if TIV.Loft and TIV.Loft.SetAnchoredImmunity then TIV.Loft.SetAnchoredImmunity(veh, false) end
+        ReleaseHandbrake(veh)
         SetState(veh, data, "idle")
 
         if TIV.Spikes.GetCount(data) == 0
@@ -397,7 +430,7 @@ function TIV.Deploy.StartRetract(ply, veh)
     data.anchored   = false
     if TIV.Loft and TIV.Loft.SetAnchoredImmunity then TIV.Loft.SetAnchoredImmunity(veh, false) end
     if TIV.Loft and TIV.Loft.CleanupTracking then TIV.Loft.CleanupTracking(veh:EntIndex()) end
-    ReleaseHandbrake(veh)
+    ApplyHandbrake(veh)
     SetState(veh, data, "retracting")
 
     TIV.Anchor.StartPullDown(veh, data, 0)
@@ -419,7 +452,6 @@ end
 -- Pressed while the pistons are going down: pull them back, springs stay.
 function TIV.Deploy.ReverseToRetracting(veh, data)
     if not IsValid(veh) or not data then return end
-    ReleaseHandbrake(veh)
     SetState(veh, data, "retracting")
     TIV.Anchor.ReleaseLock(veh, data)
     if TIV.Spikes.GetCount(data) == 0 then
