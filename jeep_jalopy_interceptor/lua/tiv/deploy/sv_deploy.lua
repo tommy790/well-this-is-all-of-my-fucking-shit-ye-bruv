@@ -261,6 +261,8 @@ end
 local function CanStartDeploy(veh, data)
     local phys = veh:GetPhysicsObject()
     if not IsValid(phys) then return false end
+    -- A physgun-frozen vehicle stays frozen; deploying would have to unfreeze it.
+    if not phys:IsMotionEnabled() then return false end
     if TIV.Compat and TIV.Compat.Enabled then
         if data.compatRecoverUntil and CurTime() < data.compatRecoverUntil then return false end
         if phys:GetVelocity():Length() > TIV.Compat.MaxDeployLinearVelocity
