@@ -169,6 +169,33 @@ hook.Add("OnPhysgunFreeze", "TIV_SpikeFreezeGuard", function(_, _, ent)
     if IsValid(ent) and ent.IsTIVSpike then return false end
 end)
 
+-- Belt and braces: whatever re-enabled motion on a spike (physgun reload on
+-- the vehicle, another addon's mass unfreeze, a duplicator), a spike is only
+-- ever a live body in the "released" / sheared-debris phase. Anything else
+-- is put back the way the deploy machine wants it.
+timer.Create("TIV_SpikeMotionGuard", 0.25, 0, function()
+    for idx, data in pairs(TIV.Deploy and TIV.Deploy.Vehicles or {}) do
+        local veh = Entity(idx)
+        for _, sd in ipairs(data.spikes or {}) do
+            local spike = sd.entity
+            if IsValid(spike) and sd.phase ~= "released" and not sd.failed then
+                local sp = spike:GetPhysicsObject()
+                if IsValid(sp) and sp:IsMotionEnabled() then
+                    sp:SetVelocity(vector_origin)
+                    sp:SetAngleVelocity(vector_origin)
+                    sp:EnableMotion(false)
+                    sp:EnableGravity(false)
+                    if sd.phase == "deployed" and sd.plantedPos then
+                        spike:SetPos(sd.plantedPos)
+                    elseif IsValid(veh) and spike:GetParent() ~= veh then
+                        TIV.SpikeAnim.ReparentSpike(veh, spike, sd)
+                    end
+                end
+            end
+        end
+    end
+end)
+
 -- ============================================================================
 -- LAYOUT
 -- ============================================================================
