@@ -1,0 +1,13 @@
+"Noise"
+{
+	"$FBTEXTURE"			"_rt_FullFrameFB" 
+	"$NOISE_INTENSITY"		"0.4"
+	"$NOISE_SATURATION"		"3.75"
+	"$NOISE_BRIGHTNESS"		"-0.3"
+	"$SCAN_INTENSITY"		"0.1"
+	"$SCAN_AMOUNT"		"2048"
+	"$SHOW_GRAIN_CONTROL"	0
+	"$ignorez"			1
+}
+
+

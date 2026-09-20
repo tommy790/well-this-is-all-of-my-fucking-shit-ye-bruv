@@ -1,0 +1,32 @@
+"SpriteCard"
+{
+	$BaseTexture 		"particle\antlion_goop5\antlion_goop5"
+
+//	$AddOverBlend 		1
+	
+	$OverbrightFactor	2
+	$ExtractGreenAlpha 	1
+	$AddSelf 			1
+//	$DepthBlend 		1
+//	$DepthBlendScale 	16
+	
+	$colorbase 			"[ 0.25 0.2 0.4 ]"
+	$colortint 			"[ 1 1 1 ]"
+
+	$color 				"[ 1 1 1 ]"
+
+	"Proxies"
+	{
+		"ManaColor"
+		{
+			"resultVar" 	$colortint
+		}
+		
+		"Add"
+		{
+			"srcVar1"		$colorbase
+			"srcVar2"		$colortint
+			"resultVar" 	$color
+		}
+	}
+}

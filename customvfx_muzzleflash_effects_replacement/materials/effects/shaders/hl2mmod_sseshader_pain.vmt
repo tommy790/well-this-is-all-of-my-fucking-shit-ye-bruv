@@ -1,0 +1,5 @@
+"editor_shader"
+{
+	"$shadername"	"hurt"
+	"$MUTABLE_01"	"0.0"	//Strength
+}

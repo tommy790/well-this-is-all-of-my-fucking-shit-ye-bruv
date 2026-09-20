@@ -1,0 +1,21 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "models/weapons/Annabelle_R/Annabelle_D"
+	"$bumpmap" "models/weapons/Annabelle_R/Annabelle_N"
+"$halflambet" "1"
+
+ "$phong"				"1"
+	"$phongexponent"			"7"
+	"$phongboost"			"4"
+	"$phongfresnelranges"		"[2 4 6]"
+	"$phongtint"			"[0.9 0.67 0.5]"
+
+	"$rimlight"			"1"
+	"$rimlightexponent"			"10"	
+	"$rimlightboost"			"2"	
+				
+	"$envmap"			"env_cubemap"
+	"$normalmapalphaenvmapmask"	"1"
+	"$envmaptint"			"[0.67 0.54 0.49]"
+
+}

@@ -1,0 +1,28 @@
+"spritecard"
+{
+	$basetexture "particle/stokes"
+	$vertexcolor 1
+	$vertexalpha 1
+	$translucent 1
+	$overbrightfactor 16
+	
+	$colorbase 	"[ 0.3 0.3 0.3 ]"
+	$colortint 	"[ 1 1 1 ]"
+
+	$color 		"[ 1 1 1 ]"
+
+	"Proxies"
+	{
+		"ManaColor"
+		{
+			"resultVar" 	$colortint
+		}
+		
+		"Add"
+		{
+			"srcVar1"		$colorbase
+			"srcVar2"		$colortint
+			"resultVar" 	$color
+		}
+	}
+}

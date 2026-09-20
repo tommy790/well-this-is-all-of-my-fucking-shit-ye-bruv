@@ -1,0 +1,7 @@
+"chromatic_dispersion"
+{
+	"$FBTEXTURE"			"_rt_FullFrameFB" 
+	"$FOCUSOFFSET" 		"1.0"
+	"$RADIAL"			1
+	"$ignorez"			1
+}

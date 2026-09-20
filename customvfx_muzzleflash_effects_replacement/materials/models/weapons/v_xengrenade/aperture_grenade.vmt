@@ -1,0 +1,20 @@
+SDK_VertexLitGeneric
+{
+	"$basetexture"	"models\weapons\v_XenGrenade\aperture_grenade"
+    "$bumpmap"      "models\weapons\v_XenGrenade\aperture_grenade_Normal"		
+
+	$phong                      1
+	$phongboost                 1
+	$phongfresnelranges         "[1 3 6]"
+	$selfillum 1
+	"Proxies"
+	{
+		"Sine"
+		{
+			"resultVar" "$selfIllumTint"
+			"sinemin" 0.25
+			"sinemax" 1.25
+			"sineperiod" 1.25
+		}
+	}
+}

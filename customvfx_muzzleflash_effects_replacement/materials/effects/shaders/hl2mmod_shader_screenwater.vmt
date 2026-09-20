@@ -1,0 +1,8 @@
+"screenwater"
+{
+	"$FBTEXTURE"		"_rt_FullFrameFB" 
+	"$NORMALTEXTURE"	"effects/shaders/HL2MMod_Shader_ScreenWater_Normal"
+	"$AMOUNT"		"1.0"
+	"$VISCOSITY"		"1.0"
+	"$ignorez"		1
+}

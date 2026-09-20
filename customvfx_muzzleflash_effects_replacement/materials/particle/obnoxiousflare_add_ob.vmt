@@ -1,0 +1,9 @@
+"SpriteCard"
+{
+	$basetexture 		"bloom/halo_baset_2"
+
+	$additive 			1
+	$translucent 		1
+	
+	$overbrightfactor 	4
+}

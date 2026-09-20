@@ -1,0 +1,10 @@
+"UnlitGeneric"
+{
+	$basetexture 	"effects/energysplash"
+	$vertexcolor 	1
+	$vertexalpha 	1
+	$translucent 	1
+	$additive 		1
+	$modulate		1
+	$vertexcolormodulate 1
+}

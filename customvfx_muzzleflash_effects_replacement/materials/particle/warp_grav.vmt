@@ -1,0 +1,13 @@
+"refract"
+{
+	$normalmap 				"particle/warp_grav"
+	$forcerefract 			1
+	$refractamount 			-0.125
+	$bluramount 			0.1
+	
+//	$vertexcolor 			1
+	$vertexalpha 			1
+	$vertexcolormodulate 	1
+	$translucent 			1
+//	$nofog 					1
+}

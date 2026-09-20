@@ -1,0 +1,61 @@
+VertexLitGeneric
+{
+"$basetexture" "decals/blood_goop3"
+"$translucent" 1
+"$decal" "1"
+"$phong" "1"
+"$phongexponenttexture" "decals/blood_goop3"
+"$phongexponent" "700"
+"$phongboost" "50"
+"$phongfresnelranges" "[0.2 0.5 1.0]"
+"$diffuseexp" "1.0"
+"$allowdiffusemodulation" "1"
+"$dudvmap"  "decals/blood_goop3_nrm"
+"$bumpmap"  "decals/blood_goop3_nrm"
+"$blendmodulatetexture" "decals/blood_goop3"
+"$basemapluminancephongmask" "1"
+
+"$rimlight"               "1"
+"$rimlightexponent"    "2"
+"$rimlightboost"          ".2"
+
+
+
+
+
+"$ssbump" "1"	
+"$decalscale" "0.07"
+
+
+"$normalmap" "decals/blood_goop3_nrm"
+"$normalmap2" "decals/blood_goop3_nrm"
+"$pseudotranslucent" "1"
+"$waterblendfactor" "1"
+
+
+}
+
+
+// Copyright © 2020 by GalaxyHighMarshal, All rights reserved.
+// All trademarks are property of their respective owners.
+// No parts of this coding or any of its contents may be reproduced, copied, modified or adapted, without the prior written consent of the author, unless otherwise indicated for stand-alone materials. Doing so would be violating
+// https://store.steampowered.com/subscriber_agreement/ 
+// I Have Spoken
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

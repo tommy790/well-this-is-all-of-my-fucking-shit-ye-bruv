@@ -1,0 +1,26 @@
+"SpriteCard"
+{
+	$BaseTexture 		"particle/fastSideSprites/fastSideSprite128_V2"
+
+	$AddOverBlend 		1
+	
+	$OverbrightFactor	2
+	$ExtractGreenAlpha 	1
+	$AddSelf 			1
+	$DepthBlend 		1
+	$DepthBlendScale 	16
+
+	// tinting broken?
+	$color 				"[ 1 1 1 ]"
+	
+	$vertexcolor 1
+	$vertexcolormodulate 1
+
+	"Proxies"
+	{
+		"ManaColor"
+		{
+			"resultVar" 	$color
+		}
+	}
+}

@@ -1,0 +1,7 @@
+"UnlitGeneric"
+{
+	// Original shader: AddTexture
+	$basetexture "particle/sparks/sparks"
+	$additive 1
+	$vertexcolor 1
+}

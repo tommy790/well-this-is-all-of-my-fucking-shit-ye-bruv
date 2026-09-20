@@ -1,0 +1,12 @@
+"SpriteCard"
+{
+	$BaseTexture 		"particle\antlion_goop5\antlion_goop5"
+
+//	$AddOverBlend 		1
+	
+	$OverbrightFactor	2
+	$ExtractGreenAlpha 	1
+	$AddSelf 			1
+//	$DepthBlend 		1
+//	$DepthBlendScale 	16
+}

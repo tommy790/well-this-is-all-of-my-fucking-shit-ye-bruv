@@ -1,0 +1,6 @@
+SDK_VertexLitGeneric
+{
+	"$baseTexture" "Models\weapons\v_camera\camera_sheet"
+	"$envmap" "env_cubemap"
+	"$envmaptint" "[ 0.2 0.2 0.2 ]"	
+}

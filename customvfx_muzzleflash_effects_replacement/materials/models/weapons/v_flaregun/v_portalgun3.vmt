@@ -1,0 +1,5 @@
+SDK_VertexLitGeneric
+{
+	"$basetexture" "models\weapons\v_flaregun/v_portalgun3"
+	"$bumpmap" "models\weapons\v_flaregun/v_portalgun3_n"
+}

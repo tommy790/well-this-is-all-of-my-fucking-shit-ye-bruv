@@ -1,0 +1,11 @@
+"SpriteCard"
+{
+    $basetexture        "particle/fastsidesprites/fastsidesprite128_v2"
+    
+    $addoverblend       1
+    $powerfunction      "[ 1.0 2.5 5 ]"
+    $addself            0.1
+    
+    $extractgreenalpha  1
+    $depthblend         1
+}

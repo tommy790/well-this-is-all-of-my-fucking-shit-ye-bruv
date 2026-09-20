@@ -1,0 +1,7 @@
+"Unlitgeneric"
+{
+	$basetexture "particle/fire_burning_character/fire_burning_character"
+	$vertexalpha 1
+	$vertexcolor 1
+	$additive 1
+}

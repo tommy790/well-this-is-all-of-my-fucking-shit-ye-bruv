@@ -1,0 +1,80 @@
+SDK_VertexLitGeneric
+{
+	"$basetexture" "Models/weapons/V_pulsepistol/bunker_gun_new"
+	"$bumpmap" "Models/weapons/V_pulsepistol/bunker_gun_new_n"
+	"$surfaceprop" "metal"
+	"$envmap" "env_cubemap"
+	//"$envmapmask" "Models/props_combine/bunker_gun01_mask"
+	"$normalmapalphaenvmapmask" "1"
+	"$selfillum" "1"
+	"$selfillummaskscale" "1.0"
+	"$selfillumtint" "[1.0 1.0 1.0]"
+	"$phong" "1"
+	"$phongboost" "1"
+	"$phongexponent" "15"
+	"$phongalbedotint" "1"								
+	"$phongfresnelranges"	"[.1 5 1]"
+
+	"$one" "1.0"
+	"$ten" "10.0"
+
+	"$charge" "0.0"
+	
+	"$chargeFinal" "1.0"
+
+	Proxies
+	{
+		// Blixibon - Make the pulse pistol turn green as it charges
+		PulsePistolCharge
+		{
+			outputCharge "$charge"
+		}
+
+		Subtract
+		{
+			srcVar1 "$one"
+			srcVar2 "$charge"
+			resultVar "$chargeFinal"
+		}
+		
+		//Sine
+		//{
+		//	sineperiod	0.25
+		//	sinemin		"$chargeFinal"
+		//	sinemax		"$chargeFinal"
+		//	timeoffset	0
+		//	resultvar	"$selfillumtint[0]"
+		//}
+		
+		//Equals
+		//{
+		//	srcVar1 "$chargeFinal"
+		//	resultVar "$selfillummaskscale"
+		//}
+
+		Equals
+		{
+			srcVar1 "$chargeFinal"
+			resultVar "$selfillumtint[0]"
+		}
+		
+		Sine
+		{
+			sineperiod	"$chargeFinal"
+			sinemin		"$chargeFinal"
+			sinemax		1.0
+			timeoffset	0
+			resultvar	"$selfillumtint[1]"
+		}
+		
+		Equals
+		{
+			srcVar1 "$chargeFinal"
+			resultVar "$selfillumtint[2]"
+		}
+	}
+}
+
+
+
+

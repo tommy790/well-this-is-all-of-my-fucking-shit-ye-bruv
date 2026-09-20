@@ -1,0 +1,9 @@
+"UnlitGeneric"
+{
+	"$basetexture" "particle/Ac/experimental/vfx_bloodpool_alphatest2"
+	"$vertexcolor" "1"
+	"$vertexalpha" "1"
+	"$alphatest" "1"
+	"$alpha" "1.1"
+	"$alphatestreference" "0.7"
+}

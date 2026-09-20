@@ -1,0 +1,10 @@
+"SpriteCard"
+{
+	$basetexture "particle/spray1/spray1.vtf"
+	$blendframes 1
+	$depthblend 1
+	$maxdistance 1600
+	$STARTFADESIZE .65
+	$ENDFADESIZE 1.1
+	$VERTEXFOGAMOUNT 1
+}

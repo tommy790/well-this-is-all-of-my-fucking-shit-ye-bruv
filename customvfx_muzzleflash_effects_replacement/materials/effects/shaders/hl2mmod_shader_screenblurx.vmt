@@ -1,0 +1,7 @@
+"GaussianX"
+{
+	"$FBTEXTURE"		"_rt_FullFrameFB"
+	"$BLURSIZE"		"1.0"
+	"$RESDIVISOR"		"1"
+	"$ignorez"		1
+}

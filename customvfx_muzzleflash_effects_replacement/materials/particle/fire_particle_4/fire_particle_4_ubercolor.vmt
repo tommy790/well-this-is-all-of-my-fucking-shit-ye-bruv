@@ -1,0 +1,10 @@
+"SpriteCard"
+{
+	$basetexture "particle/fire_particle_4/fire_particle_4"
+	$addself 2
+//	$addbasetexture2 2
+//	$addbasetexture2 1.5
+	$overbrightfactor 8
+	$DEPTHBLEND 2
+	$additive 1
+}

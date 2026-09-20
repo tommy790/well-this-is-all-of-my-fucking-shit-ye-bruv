@@ -1,0 +1,9 @@
+"SpriteCard"
+{
+	$basetexture 		"particle/sunblast_baset"
+
+	$overbrightfactor 	4
+	$addself 			2
+	$additive 			1
+	$translucent 		1
+}

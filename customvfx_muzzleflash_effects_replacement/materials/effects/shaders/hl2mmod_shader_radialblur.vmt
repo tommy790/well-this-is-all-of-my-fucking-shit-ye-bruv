@@ -1,0 +1,10 @@
+"radial_blur"
+{
+	"$FBTEXTURE"		"_rt_FullFrameFB"
+	"$BLURSTART"		"0.5"
+	"$BLURWIDTH"		"0"
+	"$gCX"			"0.5"
+	"$gCY"			"0.5"
+	"$TEXELOFFSETS"	"[0 0]"
+	"$ignorez"		1
+}

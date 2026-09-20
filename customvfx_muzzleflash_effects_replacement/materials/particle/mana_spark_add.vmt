@@ -1,0 +1,27 @@
+"UnlitGeneric"
+{
+	$basetexture 	"particle/mana_spark"
+	$additive 		1
+	$vertexcolor 	1
+	$vertexalpha 	1
+	
+	$colorbase 	"[ 0.4 0.3 0.15 ]"
+	$colortint 	"[ 1 1 1 ]"
+
+	$color 		"[ 1 1 1 ]"
+
+	"Proxies"
+	{
+		"ManaColor"
+		{
+			"resultVar" 	$colortint
+		}
+		
+		"Add"
+		{
+			"srcVar1"		$colorbase
+			"srcVar2"		$colortint
+			"resultVar" 	$color
+		}
+	}
+}

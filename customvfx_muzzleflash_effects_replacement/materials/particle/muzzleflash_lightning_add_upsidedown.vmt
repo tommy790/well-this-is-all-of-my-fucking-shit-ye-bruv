@@ -1,0 +1,12 @@
+"UnlitGeneric"
+{
+	$basetexture 		"particle/muzzleflash_lightning"
+
+	$additive 			1
+	$translucent 		1
+
+	$vertexcolor 		1
+//	$vertexalpha 		1
+
+	$basetexturetransform		"center 0 0 scale 1 1 rotate 180 translate 0 0"
+}

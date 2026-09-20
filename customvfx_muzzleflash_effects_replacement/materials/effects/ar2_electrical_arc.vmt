@@ -1,0 +1,6 @@
+"SpriteCard"
+{
+	"$basetexture" "effects/ar2_electrical_arc"
+	$additive 1
+	$overbrightfactor 8
+}

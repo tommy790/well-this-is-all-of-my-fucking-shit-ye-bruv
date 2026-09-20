@@ -1,0 +1,11 @@
+SpriteCard
+{
+	$basetexture 		"particle/beam_smoke_05"
+	
+	$translucent 		1
+	$nocull 			1
+	
+	$splinetype 		1
+	$depthblend 		1
+	$depthblendscale 	1
+}

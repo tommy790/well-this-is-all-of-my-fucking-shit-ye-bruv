@@ -1,0 +1,40 @@
+"VertexlitGeneric"
+{
+	$basetexture 				"dev/hide"
+
+	$nocull						1
+	$nodecal 					1
+
+	$alphatest 					1
+	$translucent 				1
+	$additive 					1
+	
+	$selfillumt 				1
+	$selfillumtint 				"[ 1 1 1 ]"
+	
+	$emissiveBlendEnabled 		1
+	$emissiveBlendTexture		"effects/gravrifle_noise"
+	$emissiveBlendBaseTexture	"effects/gravrifle_mask"
+	$emissiveBlendFlowTexture	"effects/gravrifle_flow"
+	$emissiveBlendTint 			"[ 1 1 1 ]"
+	$emissiveBlendStrength 		4
+	$emissiveBlendScrollVector 	"[ 0.5 -1 ]"
+
+	$energycolor 				"[ 2 1 24 ]"
+
+	"Proxies" 
+	{
+		"Equals"
+		{
+			"srcVar1" 		$energycolor
+			"resultVar" 	$selfillumtint
+		}
+		
+		"Multiply"
+		{
+			"srcVar1" 		$energycolor
+			"srcVar2"		$emissiveBlendStrength
+			"resultVar" 	$emissiveBlendTint
+		}
+	}
+}

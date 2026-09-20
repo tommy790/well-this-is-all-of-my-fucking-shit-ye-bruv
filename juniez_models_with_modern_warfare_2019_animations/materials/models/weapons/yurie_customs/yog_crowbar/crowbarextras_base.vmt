@@ -1,0 +1,23 @@
+"VertexLitGeneric"
+{
+	$basetexture	"models/weapons/yurie_customs/yog_crowbar/crowbarextras_basecolor"
+	$bumpmap		"models/weapons/yurie_customs/yog_crowbar/crowbarextras_normal"
+	$phongexponenttexture	"models/weapons/yurie_customs/yog_crowbar/crowbarextras_gloss"
+
+	$color2	"[0 0 0]"
+	$blendtintbybasealpha	"1"
+
+	$phong	"1"
+	$phongboost	"1"
+	$phongfresnelranges	"[.85 .15 1]"
+	$phongexponent	"33"
+
+	$envmap	"env_cubemap"
+	$envmaptint	"[.1 .1 .1]"
+	$normalmapalphaenvmapmask	"1"
+
+	$rimlight	"1"
+	$rimlightboost	"20"
+	$rimlightexponent	".25"
+	$rimmask	"1"
+}

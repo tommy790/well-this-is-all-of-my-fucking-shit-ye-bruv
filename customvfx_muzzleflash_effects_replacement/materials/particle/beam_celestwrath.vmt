@@ -1,0 +1,22 @@
+"VertexlitGeneric"
+{
+	$basetexture 				"dev/hide"
+
+	$nocull						1
+	$nodecal 					1
+
+	$alphatest 					1
+	$translucent 				1
+	$additive 					1
+	
+	$selfillumt 				1
+	$selfillumtint 				"[ 1 1 1 ]"
+	
+	$emissiveBlendEnabled 		1
+	$emissiveBlendTexture		"particle/mana_spectral_noise"
+	$emissiveBlendBaseTexture	"particle/beam_fire_nocolor"
+	$emissiveBlendFlowTexture	"particle/beam_celestwrath_flow"
+	$emissiveBlendTint 			"[ 4 4 4 ]"
+	$emissiveBlendStrength 		1
+	$emissiveBlendScrollVector 	"[ 0 6 ]"
+}

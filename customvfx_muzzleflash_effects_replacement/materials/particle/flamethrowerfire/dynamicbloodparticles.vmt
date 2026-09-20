@@ -1,0 +1,5 @@
+"spritecard"
+{
+	$basetexture "particle\flamethrowerfire\dynamicbloodparticles"
+	$DEPTHBLEND 0
+}

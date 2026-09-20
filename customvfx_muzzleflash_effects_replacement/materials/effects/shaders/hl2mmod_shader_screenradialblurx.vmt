@@ -1,0 +1,8 @@
+"RadialGaussianX"
+{
+	"$FBTEXTURE"		"_rt_FullFrameFB"
+	"$BLURSIZE"		"2.0"
+	"$RADIALSIZE"		"10.0"
+	"$RESDIVISOR"		"1"
+	"$ignorez"		1
+}

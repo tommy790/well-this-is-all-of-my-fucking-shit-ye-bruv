@@ -1,0 +1,13 @@
+"SpriteCard"
+{
+	$BASETEXTURE "particle/tinyFireSprites/tinyFireSprites"
+	
+// RAMPTEXTURE and POWERFUNCTION are mutually exclusive:	
+//	$RAMPTEXTURE "particle/fireGradient"
+	$POWERFUNCTION "[2.5 5 8]"
+	
+	$OVERBRIGHTFACTOR 2
+//	$EXTRACTGREENALPHA 1
+	$ADDSELF 1
+	$DEPTHBLEND 1
+}

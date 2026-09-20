@@ -1,0 +1,11 @@
+"Spritecard"
+{
+	"$basetexture" "particle/Ac/mw2019_vfx_fluid_splash_anim_1_c_shaded_edit_a"
+	"$vertexcolor" "1"
+	"$vertexalpha" "1"
+	"$translucent" "1"
+//      "$additive" "1"
+	"$depthblend"  "1"
+	"$depthblendscale"  "6"
+	"$blendframes" "1"
+}
