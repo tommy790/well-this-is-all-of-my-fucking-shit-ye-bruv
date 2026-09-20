@@ -157,6 +157,18 @@ function TIV.SpikeAnim.ApplyCompatibilityFlags(spike, veh)
     spike.DoNotDuplicate       = true
 end
 
+-- Physgun reload unfreezes every body in the vehicle's constraint system,
+-- which includes the spikes. Their motion state is owned by the deploy
+-- machine (parented piston = motion off, planted = motion off), so a player
+-- unfreeze would leave them as loose physics bodies dangling off the parent.
+hook.Add("CanPlayerUnfreeze", "TIV_SpikeUnfreezeGuard", function(_, ent)
+    if IsValid(ent) and ent.IsTIVSpike then return false end
+end)
+
+hook.Add("OnPhysgunFreeze", "TIV_SpikeFreezeGuard", function(_, _, ent)
+    if IsValid(ent) and ent.IsTIVSpike then return false end
+end)
+
 -- ============================================================================
 -- LAYOUT
 -- ============================================================================
