@@ -66,6 +66,12 @@ function TIV.Anchor.PlantSingle(veh, data, spikeData)
         sp:EnableMotion(false)
     end
 
+    -- Welded to the world: this is what actually holds it in the ground, the
+    -- motion flag above is only a solver shortcut. An unfreeze leaves it put.
+    if TIV.SpikeAnim and TIV.SpikeAnim.DropHoldWeld then TIV.SpikeAnim.DropHoldWeld(spike) end
+    local groundWeld = constraint.Weld(spike, game.GetWorld(), 0, 0, 0, true, false)
+    if IsValid(groundWeld) then Track(data, groundWeld, spikeData, "groundweld") end
+
     local nocol = constraint.NoCollide(veh, spike, 0, 0)
     if IsValid(nocol) then Track(data, nocol, spikeData, "nocollide") end
 
@@ -337,6 +343,18 @@ function TIV.Anchor.BreakSpike(veh, data, spikeIndex)
         end
     end
     return broke
+end
+
+-- Drops every constraint record for one spike (ground weld, nocollide, and
+-- any hold) so it can stroke back into its cylinder cleanly.
+function TIV.Anchor.UnplantSingle(veh, data, spikeIndex)
+    for i = #(data.constraints or {}), 1, -1 do
+        local c = data.constraints[i]
+        if c.spikeIndex == spikeIndex then
+            if IsValid(c.constraint) then c.constraint:Remove() end
+            table.remove(data.constraints, i)
+        end
+    end
 end
 
 -- ============================================================================

@@ -157,44 +157,21 @@ function TIV.SpikeAnim.ApplyCompatibilityFlags(spike, veh)
     spike.DoNotDuplicate       = true
 end
 
--- Physgun reload unfreezes every body in the vehicle's constraint system,
--- which includes the spikes. Their motion state is owned by the deploy
--- machine (parented piston = motion off, planted = motion off), so a player
--- unfreeze would leave them as loose physics bodies dangling off the parent.
-hook.Add("CanPlayerUnfreeze", "TIV_SpikeUnfreezeGuard", function(_, ent)
-    if IsValid(ent) and ent.IsTIVSpike then return false end
-end)
+-- A spike is always physically held: welded to the chassis while it rides in
+-- its cylinder, welded to the world once planted. Motion is disabled on top
+-- of that only to save the solver work, so an unfreeze changes nothing.
+local function WeldToVehicle(veh, spike)
+    if not IsValid(veh) or not IsValid(spike) then return end
+    if IsValid(spike.TIV_HoldWeld) then spike.TIV_HoldWeld:Remove() end
+    spike.TIV_HoldWeld = constraint.Weld(spike, veh, 0, 0, 0, true, false)
+end
 
-hook.Add("OnPhysgunFreeze", "TIV_SpikeFreezeGuard", function(_, _, ent)
-    if IsValid(ent) and ent.IsTIVSpike then return false end
-end)
-
--- Belt and braces: whatever re-enabled motion on a spike (physgun reload on
--- the vehicle, another addon's mass unfreeze, a duplicator), a spike is only
--- ever a live body in the "released" / sheared-debris phase. Anything else
--- is put back the way the deploy machine wants it.
-timer.Create("TIV_SpikeMotionGuard", 0.25, 0, function()
-    for idx, data in pairs(TIV.Deploy and TIV.Deploy.Vehicles or {}) do
-        local veh = Entity(idx)
-        for _, sd in ipairs(data.spikes or {}) do
-            local spike = sd.entity
-            if IsValid(spike) and sd.phase ~= "released" and not sd.failed then
-                local sp = spike:GetPhysicsObject()
-                if IsValid(sp) and sp:IsMotionEnabled() then
-                    sp:SetVelocity(vector_origin)
-                    sp:SetAngleVelocity(vector_origin)
-                    sp:EnableMotion(false)
-                    sp:EnableGravity(false)
-                    if sd.phase == "deployed" and sd.plantedPos then
-                        spike:SetPos(sd.plantedPos)
-                    elseif IsValid(veh) and spike:GetParent() ~= veh then
-                        TIV.SpikeAnim.ReparentSpike(veh, spike, sd)
-                    end
-                end
-            end
-        end
-    end
-end)
+local function DropHoldWeld(spike)
+    if IsValid(spike) and IsValid(spike.TIV_HoldWeld) then spike.TIV_HoldWeld:Remove() end
+    if IsValid(spike) then spike.TIV_HoldWeld = nil end
+end
+TIV.SpikeAnim.WeldToVehicle = WeldToVehicle
+TIV.SpikeAnim.DropHoldWeld  = DropHoldWeld
 
 -- ============================================================================
 -- LAYOUT
@@ -236,6 +213,7 @@ function TIV.SpikeAnim.ReparentSpike(veh, spike, spikeData)
     spike:SetParent(veh)
     spike:SetLocalPos(spikeData.storedLocalPos or spikeData.localPos or vector_origin)
     spike:SetLocalAngles(spikeData.storedLocalAng or GetParentedLocalAngle())
+    WeldToVehicle(veh, spike)
     spikeData.phase = "idle"
     spikeData.failed = nil
     spikeData.plantedPos = nil
@@ -319,7 +297,7 @@ function TIV.SpikeAnim.CreateSpikes(veh, data)
 
         local sp = spike:GetPhysicsObject()
         if IsValid(sp) then
-            sp:SetMass(1)
+            sp:SetMass(25)
             sp:EnableMotion(false)
             sp:EnableGravity(false)
         end
@@ -394,7 +372,6 @@ local function StartStroke(sessionID, veh, spikeData, targetLocalPos, duration, 
 
     if not IsValid(spike:GetParent()) then
         local cur = veh:WorldToLocal(spike:GetPos())
-        constraint.RemoveAll(spike)
         local sp = spike:GetPhysicsObject()
         if IsValid(sp) then
             sp:EnableMotion(false)
@@ -405,6 +382,7 @@ local function StartStroke(sessionID, veh, spikeData, targetLocalPos, duration, 
         spike:SetLocalPos(cur)
         spike:SetLocalAngles(localAng)
     end
+    DropHoldWeld(spike)
 
     local startLocalPos = spike:GetLocalPos()
     local startTime = CurTime()
@@ -584,6 +562,7 @@ function TIV.SpikeAnim.RetractFromGround(veh, data, callback)
             sd.phase = "retracting"
             data.spikeAnims[sd.index] = "retracting"
             SendPhase(veh, sd.index, "retracting")
+            TIV.Anchor.UnplantSingle(veh, data, sd.index)
 
             StartStroke(sessionID, veh, sd, sd.storedLocalPos, retractDuration, "retract", nil, function(_, ok)
                 if not ok then tick() return end
