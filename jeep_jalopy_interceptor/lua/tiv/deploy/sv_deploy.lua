@@ -174,10 +174,10 @@ function TIV.Deploy.HandleInput(ply, veh)
         TIV.Deploy.StartDeploy(ply, veh)
     elseif s == "anchored" then
         TIV.Deploy.StartRetract(ply, veh)
-    elseif s == "deploying_spikes" then
-        TIV.Deploy.ReverseToRetracting(veh, data)
     elseif s == "lowering" then
         TIV.Deploy.ReverseToLowering(veh, data)
+    elseif s == "deploying_spikes" then
+        TIV.Deploy.ReverseToRetracting(veh, data)
     elseif s == "retracting" then
         TIV.Deploy.ReverseToDeploying(veh, data)
     elseif s == "raising" then
@@ -223,13 +223,15 @@ local function CanStartDeploy(veh, data)
     return true
 end
 
+-- Locks the settled pose with ballsockets, then lets the springs go.
 local function FinalizeAnchored(veh, data)
     if not IsValid(veh) then return end
-    if data.state ~= "lowering" and data.state ~= "deploying_spikes" then return end
+    if data.state ~= "deploying_spikes" and data.state ~= "lowering" then return end
     timer.Remove("TIV_Lower_" .. veh:EntIndex())
 
     TIV.Anchor.AttachAll(veh, data)
     if TIV.Spikes.GetCount(data) == 0 then TIV.Anchor.AttachWorld(veh, data) end
+    TIV.Anchor.ReleaseSprings(veh, data)
     TIV.Anchor.UnfreezeForDeploy(veh)
 
     data.anchored   = true
@@ -240,7 +242,23 @@ local function FinalizeAnchored(veh, data)
     SetState(veh, data, "anchored")
 end
 
--- Pull-down phase: springs shorten over LowerTime, then the pose is locked.
+-- Spikes drive in from the already-lowered pose; the springs keep holding
+-- until the ballsockets take over in FinalizeAnchored.
+local function StartSpikeDeploy(veh, data)
+    if not IsValid(veh) then return end
+    if TIV.Spikes.GetCount(data) == 0 then
+        SetState(veh, data, "deploying_spikes")
+        FinalizeAnchored(veh, data)
+        return
+    end
+    SetState(veh, data, "deploying_spikes")
+    TIV.Spikes.Deploy(veh, data, function()
+        if not IsValid(veh) or data.state ~= "deploying_spikes" then return end
+        FinalizeAnchored(veh, data)
+    end)
+end
+
+-- Airbags first: springs to the ground shorten over LowerTime.
 local function StartLowering(veh, data)
     if not IsValid(veh) then return end
     SetState(veh, data, "lowering")
@@ -249,7 +267,8 @@ local function StartLowering(veh, data)
     data.lowerAmount = lowerAmount
     local created = TIV.Anchor.StartPullDown(veh, data, lowerAmount)
     if created == 0 then
-        FinalizeAnchored(veh, data)
+        -- Nothing solid below the mounts (airborne, over water, etc.).
+        StartSpikeDeploy(veh, data)
         return
     end
 
@@ -273,10 +292,10 @@ local function StartLowering(veh, data)
 
         if frac >= 1 then
             timer.Remove(timerName)
-            -- Give the suspension one more beat to settle on the shortened
-            -- springs before the ballsockets freeze the pose in.
+            -- One more beat for the suspension to settle on the shortened
+            -- springs before the pistons start from that height.
             timer.Simple(0.25, function()
-                if IsValid(veh) then FinalizeAnchored(veh, data) end
+                if IsValid(veh) and data.state == "lowering" then StartSpikeDeploy(veh, data) end
             end)
         end
     end)
@@ -291,18 +310,7 @@ function TIV.Deploy.StartDeploy(ply, veh)
     timer.Remove("TIV_Raise_" .. veh:EntIndex())
     data.gravityReleased = false
     data.originalPos = veh:GetPos()
-
-    if TIV.Spikes.GetCount(data) == 0 then
-        SetState(veh, data, "lowering")
-        FinalizeAnchored(veh, data)
-        return
-    end
-
-    SetState(veh, data, "deploying_spikes")
-    TIV.Spikes.Deploy(veh, data, function()
-        if not IsValid(veh) or data.state ~= "deploying_spikes" then return end
-        StartLowering(veh, data)
-    end)
+    StartLowering(veh, data)
 end
 
 -- Used by the wind auto-deploy feature.
@@ -338,6 +346,8 @@ function TIV.Deploy.RaiseVehicle(ply, veh)
     end)
 end
 
+-- Mirror of deploy: the body stays held down (springs at the current pose)
+-- while the pistons withdraw, then RaiseVehicle lets the suspension back up.
 function TIV.Deploy.StartRetract(ply, veh)
     if not IsValid(veh) then return end
     local data = TIV.Deploy.GetState(veh)
@@ -350,51 +360,58 @@ function TIV.Deploy.StartRetract(ply, veh)
     ReleaseHandbrake(veh)
     SetState(veh, data, "retracting")
 
-    -- Drop the hold-down first so the suspension rebounds while the pistons
-    -- are still in the ground, then withdraw them.
-    TIV.Anchor.ReleaseHold(veh, data)
+    TIV.Anchor.StartPullDown(veh, data, 0)
+    TIV.Anchor.ReleaseLock(veh, data)
 
     if TIV.Spikes.GetCount(data) == 0 then
         TIV.Deploy.RaiseVehicle(ply, veh)
         return
     end
-    timer.Simple(0.3, function()
+    TIV.Spikes.Retract(veh, data, function()
         if not IsValid(veh) or data.state ~= "retracting" then return end
-        TIV.Spikes.Retract(veh, data, function()
-            if not IsValid(veh) or data.state ~= "retracting" then return end
-            TIV.Deploy.RaiseVehicle(ply, veh)
-        end)
+        TIV.Deploy.RaiseVehicle(ply, veh)
     end)
 end
 
 -- ============================================================================
 -- MID-SEQUENCE REVERSALS
 -- ============================================================================
+-- Pressed while the pistons are going down: pull them back, springs stay.
 function TIV.Deploy.ReverseToRetracting(veh, data)
     if not IsValid(veh) or not data then return end
     ReleaseHandbrake(veh)
     SetState(veh, data, "retracting")
-    TIV.Anchor.ReleaseHold(veh, data)
+    TIV.Anchor.ReleaseLock(veh, data)
+    if TIV.Spikes.GetCount(data) == 0 then
+        TIV.Deploy.RaiseVehicle(nil, veh)
+        return
+    end
     TIV.Spikes.InterruptAndRetract(veh, data, function()
         if not IsValid(veh) or data.state ~= "retracting" then return end
         TIV.Deploy.RaiseVehicle(nil, veh)
     end)
 end
 
--- Pressed during the pull-down: same thing, the springs just go away.
-TIV.Deploy.ReverseToLowering = TIV.Deploy.ReverseToRetracting
+-- Pressed during the pull-down: nothing is in the ground yet, just come up.
+function TIV.Deploy.ReverseToLowering(veh, data)
+    if not IsValid(veh) or not data then return end
+    timer.Remove("TIV_Lower_" .. veh:EntIndex())
+    TIV.Deploy.RaiseVehicle(nil, veh)
+end
 
+-- Pressed while the pistons are coming up: drive them back in. The springs
+-- from StartRetract are still holding the pose.
 function TIV.Deploy.ReverseToDeploying(veh, data)
     if not IsValid(veh) or not data then return end
+    if not data.pullDown then TIV.Anchor.StartPullDown(veh, data, 0) end
+    SetState(veh, data, "deploying_spikes")
     if TIV.Spikes.GetCount(data) == 0 then
-        SetState(veh, data, "lowering")
         FinalizeAnchored(veh, data)
         return
     end
-    SetState(veh, data, "deploying_spikes")
     TIV.Spikes.InterruptAndDeploy(veh, data, function()
         if not IsValid(veh) or data.state ~= "deploying_spikes" then return end
-        StartLowering(veh, data)
+        FinalizeAnchored(veh, data)
     end)
 end
 

@@ -74,40 +74,80 @@ function TIV.Anchor.PlantSingle(veh, data, spikeData)
 end
 
 -- ============================================================================
--- PULL-DOWN (elastics chassis -> planted spikes)
+-- PULL-DOWN (elastics chassis -> ground)
 -- ============================================================================
--- Returns the number of elastics created. `lowerAmount` is how far the
--- chassis mount should end up below its current height; the suspension is
--- the real limit, the spring only supplies the pull.
+-- The springs run from the chassis mounts to points on the world found by
+-- tracing straight down, so lowering does not depend on spikes existing.
+local function GroundTraceFilter(veh, data)
+    return function(ent)
+        if not IsValid(ent) then return true end
+        if ent == veh or ent:GetParent() == veh then return false end
+        if ent.TIV_OwnerVehicle == veh or ent.IsTIVArmor or ent.IsTIVSpike then return false end
+        if ent:IsPlayer() or ent:IsVehicle() then return false end
+        for _, sd in ipairs(data.spikes or {}) do
+            if sd.entity == ent then return false end
+        end
+        return true
+    end
+end
+
+local function MountPoints(veh, data)
+    local mounts = {}
+    for _, sd in ipairs(data.spikes or {}) do
+        local lp = sd.storedLocalPos or sd.localPos or sd.offset
+        if lp then mounts[#mounts + 1] = lp end
+    end
+    if #mounts > 0 then return mounts end
+
+    local mins, maxs = veh:OBBMins(), veh:OBBMaxs()
+    local z = mins.z + 8
+    local ix, iy = (maxs.x - mins.x) * 0.2, (maxs.y - mins.y) * 0.2
+    return {
+        Vector(maxs.x - ix, maxs.y - iy, z),
+        Vector(maxs.x - ix, mins.y + iy, z),
+        Vector(mins.x + ix, maxs.y - iy, z),
+        Vector(mins.x + ix, mins.y + iy, z),
+    }
+end
+
+-- Returns the number of springs created. `lowerAmount` is how far the chassis
+-- should end up below its current height; the suspension is the real limit,
+-- the spring only supplies the pull. lowerAmount 0 just holds the current pose.
 function TIV.Anchor.StartPullDown(veh, data, lowerAmount)
     if not IsValid(veh) then return 0 end
-    local planted = {}
-    for _, sd in ipairs(data.spikes or {}) do
-        if sd.phase == "deployed" and IsValid(sd.entity) then planted[#planted + 1] = sd end
-    end
-    if #planted == 0 then return 0 end
+    local world = game.GetWorld()
+    if not IsValid(world) then return 0 end
+    lowerAmount = lowerAmount or 0
 
+    local mounts = MountPoints(veh, data)
+    local filter = GroundTraceFilter(veh, data)
     local mass = VehicleMass(veh)
-    local n = #planted
-    -- Spring stiffness per unit stretch: at full overshoot the anchors pull
-    -- with roughly 8x the vehicle weight, spread across the spikes.
+    local n = #mounts
     local overshoot = 12
-    local constant  = (mass * 600 * 8) / (n * (lowerAmount + overshoot))
-    local damping   = (mass * 40) / n
+    -- At full shortening the springs pull with roughly 8x the vehicle weight,
+    -- spread across the mounts.
+    local constant = (mass * 600 * 8) / (n * (lowerAmount + overshoot))
+    local damping  = (mass * 40) / n
 
     data.pullDown = { elastics = {}, startTime = CurTime(), lowerAmount = lowerAmount, overshoot = overshoot }
 
-    for _, sd in ipairs(planted) do
-        local mountLocal = sd.storedLocalPos or sd.localPos or veh:WorldToLocal(sd.entity:GetPos())
+    for _, mountLocal in ipairs(mounts) do
         local mountWorld = veh:LocalToWorld(mountLocal)
-        local restLen = mountWorld:Distance(sd.entity:GetPos())
-
-        local el = constraint.Elastic(veh, sd.entity, 0, 0, mountLocal, vector_origin,
-            constant, damping, 0, "", 0, true)
-        if IsValid(el) then
-            el:Fire("SetSpringLength", tostring(restLen))
-            Track(data, el, sd, "elastic", { restLength = restLen })
-            data.pullDown.elastics[#data.pullDown.elastics + 1] = { con = el, restLength = restLen }
+        local tr = util.TraceLine({
+            start  = mountWorld,
+            endpos = mountWorld - Vector(0, 0, 300),
+            filter = filter,
+            mask   = MASK_SOLID_BRUSHONLY,
+        })
+        if tr.Hit and not tr.StartSolid then
+            local restLen = mountWorld:Distance(tr.HitPos)
+            local el = constraint.Elastic(veh, world, 0, 0, mountLocal, tr.HitPos,
+                constant, damping, 0, "", 0, true)
+            if IsValid(el) then
+                el:Fire("SetSpringLength", tostring(restLen))
+                Track(data, el, nil, "elastic", { restLength = restLen, localPos = mountLocal })
+                data.pullDown.elastics[#data.pullDown.elastics + 1] = { con = el, restLength = restLen }
+            end
         end
     end
     return #data.pullDown.elastics
@@ -124,6 +164,27 @@ function TIV.Anchor.UpdatePullDown(data, frac)
             e.con:Fire("SetSpringLength", tostring(math.max(e.restLength - shorten, 1)))
         end
     end
+end
+
+local function RemoveByType(data, wanted)
+    for i = #(data.constraints or {}), 1, -1 do
+        local c = data.constraints[i]
+        if c.type == wanted then
+            if IsValid(c.constraint) then c.constraint:Remove() end
+            table.remove(data.constraints, i)
+        end
+    end
+end
+
+-- Drops the springs only; used once the ballsockets hold the pose.
+function TIV.Anchor.ReleaseSprings(veh, data)
+    RemoveByType(data, "elastic")
+    data.pullDown = nil
+end
+
+-- Drops the ballsockets only; the springs (if any) keep the body down.
+function TIV.Anchor.ReleaseLock(veh, data)
+    RemoveByType(data, "ballsocket")
 end
 
 -- ============================================================================
@@ -244,14 +305,8 @@ end
 -- Removes only the hold-down constraints (ballsockets + elastics) so the
 -- suspension springs back; nocollides stay until the spikes retract.
 function TIV.Anchor.ReleaseHold(veh, data)
-    for i = #(data.constraints or {}), 1, -1 do
-        local c = data.constraints[i]
-        if c.type == "ballsocket" or c.type == "elastic" then
-            if IsValid(c.constraint) then c.constraint:Remove() end
-            table.remove(data.constraints, i)
-        end
-    end
-    data.pullDown = nil
+    TIV.Anchor.ReleaseLock(veh, data)
+    TIV.Anchor.ReleaseSprings(veh, data)
     if IsValid(veh) then TIV.Anchor.UnfreezeForDeploy(veh) end
 end
 
