@@ -180,6 +180,7 @@ function TIV.Loft.FailSpikeList(veh, data, spikesToFail, duration)
 
             local spikeEnt = sd.entity
             if IsValid(spikeEnt) then
+                spikeEnt:SetMoveType(MOVETYPE_VPHYSICS)
                 local sp = spikeEnt:GetPhysicsObject()
                 if IsValid(sp) then
                     sp:EnableMotion(true)

@@ -157,21 +157,24 @@ function TIV.SpikeAnim.ApplyCompatibilityFlags(spike, veh)
     spike.DoNotDuplicate       = true
 end
 
--- A spike is always physically held: welded to the chassis while it rides in
--- its cylinder, welded to the world once planted. Motion is disabled on top
--- of that only to save the solver work, so an unfreeze changes nothing.
-local function WeldToVehicle(veh, spike)
-    if not IsValid(veh) or not IsValid(spike) then return end
-    if IsValid(spike.TIV_HoldWeld) then spike.TIV_HoldWeld:Remove() end
-    spike.TIV_HoldWeld = constraint.Weld(spike, veh, 0, 0, 0, true, false)
+-- Stowed spikes ride parented with MOVETYPE_NONE: VPhysics cannot move the
+-- entity at all, so a physgun unfreeze changes nothing. They must never be
+-- welded to the chassis -- a motion-disabled body welded to the jeep pins
+-- the jeep. Once unparented (planted / released) they go back to VPHYSICS.
+local function StowPhysics(spike)
+    local sp = spike:GetPhysicsObject()
+    if IsValid(sp) then
+        sp:EnableMotion(false)
+        sp:EnableGravity(false)
+    end
+    spike:SetMoveType(MOVETYPE_NONE)
 end
 
-local function DropHoldWeld(spike)
-    if IsValid(spike) and IsValid(spike.TIV_HoldWeld) then spike.TIV_HoldWeld:Remove() end
-    if IsValid(spike) then spike.TIV_HoldWeld = nil end
+local function FreePhysics(spike)
+    spike:SetMoveType(MOVETYPE_VPHYSICS)
 end
-TIV.SpikeAnim.WeldToVehicle = WeldToVehicle
-TIV.SpikeAnim.DropHoldWeld  = DropHoldWeld
+TIV.SpikeAnim.StowPhysics = StowPhysics
+TIV.SpikeAnim.FreePhysics = FreePhysics
 
 -- ============================================================================
 -- LAYOUT
@@ -202,18 +205,13 @@ end
 function TIV.SpikeAnim.ReparentSpike(veh, spike, spikeData)
     if not IsValid(veh) or not IsValid(spike) then return end
     constraint.RemoveAll(spike)
-    local sp = spike:GetPhysicsObject()
-    if IsValid(sp) then
-        sp:EnableMotion(false)
-        sp:EnableGravity(false)
-    end
     TIV.SpikeAnim.ApplyCompatibilityFlags(spike, veh)
     TIV.SpikeAnim.ApplyVisibility(spike)
     spike:SetCollisionGroup(COLLISION_GROUP_IN_VEHICLE)
     spike:SetParent(veh)
     spike:SetLocalPos(spikeData.storedLocalPos or spikeData.localPos or vector_origin)
     spike:SetLocalAngles(spikeData.storedLocalAng or GetParentedLocalAngle())
-    WeldToVehicle(veh, spike)
+    StowPhysics(spike)
     spikeData.phase = "idle"
     spikeData.failed = nil
     spikeData.plantedPos = nil
@@ -372,17 +370,12 @@ local function StartStroke(sessionID, veh, spikeData, targetLocalPos, duration, 
 
     if not IsValid(spike:GetParent()) then
         local cur = veh:WorldToLocal(spike:GetPos())
-        local sp = spike:GetPhysicsObject()
-        if IsValid(sp) then
-            sp:EnableMotion(false)
-            sp:EnableGravity(false)
-        end
         spike:SetCollisionGroup(COLLISION_GROUP_IN_VEHICLE)
         spike:SetParent(veh)
         spike:SetLocalPos(cur)
         spike:SetLocalAngles(localAng)
+        StowPhysics(spike)
     end
-    DropHoldWeld(spike)
 
     local startLocalPos = spike:GetLocalPos()
     local startTime = CurTime()

@@ -57,6 +57,7 @@ function TIV.Anchor.PlantSingle(veh, data, spikeData)
         spike:SetPos(pos)
         spike:SetAngles(ang)
     end
+    spike:SetMoveType(MOVETYPE_VPHYSICS)
 
     local sp = spike:GetPhysicsObject()
     if IsValid(sp) then
@@ -68,7 +69,6 @@ function TIV.Anchor.PlantSingle(veh, data, spikeData)
 
     -- Welded to the world: this is what actually holds it in the ground, the
     -- motion flag above is only a solver shortcut. An unfreeze leaves it put.
-    if TIV.SpikeAnim and TIV.SpikeAnim.DropHoldWeld then TIV.SpikeAnim.DropHoldWeld(spike) end
     local groundWeld = constraint.Weld(spike, game.GetWorld(), 0, 0, 0, true, false)
     if IsValid(groundWeld) then Track(data, groundWeld, spikeData, "groundweld") end
 
