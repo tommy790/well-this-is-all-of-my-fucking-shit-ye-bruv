@@ -3,16 +3,16 @@
 -- ============================================================================
 -- State machine:
 --
---   idle -> deploying_spikes -> lowering -> anchored
+--   idle -> lowering -> deploying_spikes -> anchored
 --   anchored -> retracting -> raising -> idle
 --
---   deploying_spikes : hydraulic pistons stroke down and plant in the ground
---   lowering         : elastic pull-down constraints shorten; the chassis is
---                      pulled onto its suspension by real force
---   anchored         : limited ballsockets lock the settled pose
---   retracting       : hold-down released (suspension rebounds), pistons
---                      withdraw
---   raising          : short settle window before the vehicle is idle again
+--   lowering         : springs from the chassis mounts to the ground shorten;
+--                      the chassis is pulled onto its suspension by real force
+--   deploying_spikes : hydraulic pistons stroke down from the lowered pose and
+--                      plant in the ground
+--   anchored         : limited ballsockets lock the settled pose, springs go
+--   retracting       : springs hold the pose while the pistons withdraw
+--   raising          : everything released, suspension rebounds on its own
 --
 -- The chassis physics object is a live body in every state. Nothing here
 -- calls SetPos or EnableMotion(false) on the vehicle.
@@ -266,10 +266,17 @@ local function StartLowering(veh, data)
     local lowerAmount = TIV.Deploy.GetSuspensionLimit(veh)
     data.lowerAmount = lowerAmount
     local created = TIV.Anchor.StartPullDown(veh, data, lowerAmount)
+    local debugOn = GetConVar("tiv_debug_freeze") and GetConVar("tiv_debug_freeze"):GetBool()
+    local startZ  = veh:GetPos().z
     if created == 0 then
         -- Nothing solid below the mounts (airborne, over water, etc.).
+        print(string.format("[TIV] #%d lowering skipped: no ground under any mount point", veh:EntIndex()))
         StartSpikeDeploy(veh, data)
         return
+    end
+    if debugOn then
+        print(string.format("[TIV] #%d lowering: %d spring(s), target %.1f u over %.2fs",
+            veh:EntIndex(), created, lowerAmount, (TIV.Config.LowerTime or 1) / SpeedMult()))
     end
 
     local lowerTime  = (TIV.Config.LowerTime or 1) / SpeedMult()
@@ -295,7 +302,12 @@ local function StartLowering(veh, data)
             -- One more beat for the suspension to settle on the shortened
             -- springs before the pistons start from that height.
             timer.Simple(0.25, function()
-                if IsValid(veh) and data.state == "lowering" then StartSpikeDeploy(veh, data) end
+                if not IsValid(veh) or data.state ~= "lowering" then return end
+                if debugOn then
+                    print(string.format("[TIV] #%d lowering done: chassis dropped %.1f u (asked %.1f)",
+                        veh:EntIndex(), startZ - veh:GetPos().z, lowerAmount))
+                end
+                StartSpikeDeploy(veh, data)
             end)
         end
     end)
