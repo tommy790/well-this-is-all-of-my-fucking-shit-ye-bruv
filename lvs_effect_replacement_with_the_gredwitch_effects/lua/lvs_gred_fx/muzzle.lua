@@ -44,10 +44,9 @@ local MAX_NAMED_DIST      = 32   -- "muzzle"/"barrel" named candidates: a real
                                  -- BMD-4 "muzzle" id 18 units away -> smoke on
                                  -- the wrong spot). 32 still tolerates turret
                                  -- pivot offset while rejecting non-muzzles.
-local MAX_GENERIC_DIST    = 48   -- strict radius for unnamed models
-
--- Local-space quantization for the static-barrel cache.
-local LOCAL_CELL = 8
+local MAX_GENERIC_DIST    = 24   -- strict radius for unnamed attachments;
+                                 -- LVS fires from the attachment itself so a
+                                 -- real muzzle is within a few units
 
 local function isMuzzleName(name)
     if not isstring(name) then return false end
@@ -87,22 +86,12 @@ local function GetCache(ent)
         model  = model,
         atts   = atts,
         named  = named,
-        byLocal = {},  -- quantized local pos → attachment id (static barrels)
         lvsNameId = nil, -- cached id for ent.TurretBallisticsMuzzleAttachment
         lvsName  = nil,
     }
 
     ent._lvsGredMuzzleCache = cache
     return cache
-end
-
-local function localKey(v)
-    if not isvector(v) then return nil end
-    return math.floor(v.x / LOCAL_CELL + 0.5)
-        .. ","
-        .. math.floor(v.y / LOCAL_CELL + 0.5)
-        .. ","
-        .. math.floor(v.z / LOCAL_CELL + 0.5)
 end
 
 --[[---------------------------------------------------------------------------
@@ -448,28 +437,10 @@ function LVS_GRED_FX._ResolveMuzzleAttachmentImpl(ent, muzzlePos, effectDataAtt)
         end
     end
 
-    -- 4) Static-barrel cache: fixed local muzzle positions resolve once.
-    --    The cache stores the resolved id AND the exact local position. A
-    --    cache hit is only accepted when the CURRENT muzzle local position is
-    --    within a few units of the cached one — this prevents two barrels
-    --    whose muzzles share an 8-unit cell (e.g. BMD-4M autocannon + main
-    --    cannon) from cross-returning each other's attachment id.
-    if ent.WorldToLocal then
-        local localPos = (ent == ACTIVE_VEH) and (muzzlePos - REF_ORIGIN) or ent:WorldToLocal(muzzlePos)
-        local key = localKey(localPos)
-        if key then
-            local cached = cache.byLocal[key]
-            if cached and cached.id then
-                if LVS_GRED_FX.ValidAttachment(ent, cached.id) and cached.pos and isvector(cached.pos) then
-                    local drift = localPos:DistToSqr(cached.pos)
-                    if drift <= 4 * 4 then -- within 4 units of the cached barrel
-                        return cached.id, { method = "local_cache", dist = nil, name = LVS_GRED_FX.AttachmentName(ent, cached.id) }
-                    end
-                end
-                cache.byLocal[key] = nil
-            end
-        end
-    end
+    -- (The former static-barrel local-position cache was removed: one wrong
+    --  resolve poisoned every later shot in the same 8-unit cell -- the
+    --  "local_cache -> id 15, name ?" failure. On the frozen reference the
+    --  nearest search below is cheap enough to run every shot.)
 
     -- 5) Generic nearest attachment inside a strict radius (unnamed models).
     if cache.atts and #cache.atts > 0 then
@@ -492,13 +463,6 @@ function LVS_GRED_FX._ResolveMuzzleAttachmentImpl(ent, muzzlePos, effectDataAtt)
         end
 
         if best > 0 then
-            if ent.WorldToLocal then
-                local localPos = (ent == ACTIVE_VEH) and (muzzlePos - REF_ORIGIN) or ent:WorldToLocal(muzzlePos)
-                local key = localKey(localPos)
-                if key then
-                    cache.byLocal[key] = { id = best, pos = localPos }
-                end
-            end
             return best, {
                 method = "nearest",
                 dist = math.sqrt(bestDistSqr),
