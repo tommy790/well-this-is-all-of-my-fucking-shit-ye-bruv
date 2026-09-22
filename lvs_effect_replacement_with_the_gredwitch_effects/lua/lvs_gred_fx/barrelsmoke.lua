@@ -56,11 +56,20 @@ timer.Create("lvs_gred_fx_smoke_sweep", 2, 0, function()
     end
 end)
 
+-- Per-PCF emission length. Cannons chain two systems (vj narrow burst, then
+-- the lingering muzzle smoke) and the second must not start until the first
+-- has stopped emitting, so each stage owns its own life.
+local function smokeLife(pcf)
+    local t = cfg.SmokeLifeByPcf and cfg.SmokeLifeByPcf[pcf]
+    return t or cfg.SmokeLife
+end
+
 function LVS_GRED_FX_BARRELSMOKE.Spawn(ent, muzzlePos, att, pcf)
     if not cfg.SmokeEnabled() then return end
     if not IsValid(ent) or not isvector(muzzlePos) then return end
     if not isstring(pcf) or pcf == "" then return end
     if not LVS_GRED_FX.Preload(pcf) then return end
+    local life = smokeLife(pcf)
 
     local byPcf = ACTIVE[ent]
     if not byPcf then
@@ -98,7 +107,7 @@ function LVS_GRED_FX_BARRELSMOKE.Spawn(ent, muzzlePos, att, pcf)
     if smokeAtt and smokeAtt > 0 and LVS_GRED_FX.ValidAttachment(ent, smokeAtt) then
         -- forceHandle: smoke must be trackable so we can replace it later.
         psys = LVS_GRED_FX.SpawnAttached(pcf, ent, smokeAtt, {
-            life = cfg.SmokeLife,
+            life = life,
             clear = false,
             forceHandle = true,
         })
@@ -110,7 +119,7 @@ function LVS_GRED_FX_BARRELSMOKE.Spawn(ent, muzzlePos, att, pcf)
                 "pos:", tostring(muzzlePos),
                 "reason: no valid attachment", "att:", tostring(smokeAtt))
         end
-        psys = LVS_GRED_FX.SpawnWorld(pcf, muzzlePos, angle_zero, cfg.SmokeLife, false)
+        psys = LVS_GRED_FX.SpawnWorld(pcf, muzzlePos, angle_zero, life, false)
     end
 
     if PsysValid(psys) then
@@ -118,7 +127,41 @@ function LVS_GRED_FX_BARRELSMOKE.Spawn(ent, muzzlePos, att, pcf)
             psys    = psys,
             att     = smokeAtt,
             spawnedAt = CurTime(),
-            expires = CurTime() + cfg.SmokeLife + 0.1,
+            expires = CurTime() + life + 0.1,
         }
     end
+    return life
+end
+
+-- Plays a list of smoke PCFs one after another: entry N+1 starts the moment
+-- entry N stops emitting. A single string behaves as before. Each shot gets
+-- its own chain; a re-fire before the chain finished cancels the pending
+-- stages of the old chain so the sequence restarts cleanly.
+local CHAINS = setmetatable({}, { __mode = "k" })
+
+function LVS_GRED_FX_BARRELSMOKE.SpawnSequence(ent, muzzlePos, att, list)
+    if not cfg.SmokeEnabled() or not IsValid(ent) then return end
+    if isstring(list) then list = { list } end
+    if not istable(list) or #list == 0 then return end
+
+    local chains = CHAINS[ent]
+    if not chains then
+        chains = {}
+        CHAINS[ent] = chains
+    end
+    local key = att or 0
+    local token = (chains[key] or 0) + 1
+    chains[key] = token
+
+    local function stage(i)
+        if i > #list then return end
+        if not IsValid(ent) or chains[key] ~= token then return end
+        local life = LVS_GRED_FX_BARRELSMOKE.Spawn(ent, muzzlePos, att, list[i])
+        if i < #list then
+            -- Throttled (rapid re-fire) spawns return nil: the previous
+            -- stage's smoke is still running, so keep its timing.
+            timer.Simple(life or smokeLife(list[i]), function() stage(i + 1) end)
+        end
+    end
+    stage(1)
 end

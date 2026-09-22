@@ -200,17 +200,11 @@ function LVS_GRED_FX_MUZZLEFLASH.Spawn(effectName, self, data)
     -- tracer record has paired yet. The smoke field can be a single string or
     -- a list (cannons spawn BOTH vj_smoke_white_narrow and weapon_muzzle_smoke
     -- at the same time).
+    -- A list plays in order: the next PCF starts when the previous one has
+    -- stopped emitting (cannon: vj burst first, lingering barrel smoke after).
     local smokeList = (map and map.smoke) or cfg.DefaultSmokeByEffect[effectName]
     if cfg.SmokeEnabled() and smokeList then
-        if isstring(smokeList) then
-            smokeList = { smokeList }
-        end
-        for i = 1, #smokeList do
-            local pcf = smokeList[i]
-            if pcf and pcf ~= "" then
-                LVS_GRED_FX_BARRELSMOKE.Spawn(rootEnt, muzzlePos, att, pcf)
-            end
-        end
+        LVS_GRED_FX_BARRELSMOKE.SpawnSequence(rootEnt, muzzlePos, att, smokeList)
     end
 
     -- The tracer record sometimes arrives a frame after the muzzle effect
@@ -240,15 +234,7 @@ function LVS_GRED_FX_MUZZLEFLASH.Spawn(effectName, self, data)
 
             local smokeListNow = mapNow.smoke or cfg.DefaultSmokeByEffect[effectName]
             if cfg.SmokeEnabled() and smokeListNow then
-                if isstring(smokeListNow) then
-                    smokeListNow = { smokeListNow }
-                end
-                for i = 1, #smokeListNow do
-                    local pcf = smokeListNow[i]
-                    if pcf and pcf ~= "" then
-                        LVS_GRED_FX_BARRELSMOKE.Spawn(rootEnt, muzzlePos, att, pcf)
-                    end
-                end
+                LVS_GRED_FX_BARRELSMOKE.SpawnSequence(rootEnt, muzzlePos, att, smokeListNow)
             end
         end)
     end
