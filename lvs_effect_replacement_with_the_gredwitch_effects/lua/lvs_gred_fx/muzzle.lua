@@ -37,7 +37,9 @@ local cfg = LVS_GRED_FX.Config
 local Debug = LVS_GRED_FX.Debug
 
 -- Tolerances (units).
-local MAX_EFFECTDATA_DIST = 96   -- EffectData attachment must be near the muzzle
+local MAX_EFFECTDATA_DIST = 24   -- EffectData attachment must be near the muzzle;
+                                 -- LVS often sends a stale/base-model id here
+                                 -- (id 1 = a suspension attachment on 2S1/2S38)
 local MAX_NAMED_DIST      = 32   -- "muzzle"/"barrel" named candidates: a real
                                  -- muzzle is within a few units of bullet.Src;
                                  -- 128 allowed far/wrong attachments (e.g. a
@@ -398,11 +400,28 @@ function LVS_GRED_FX._ResolveMuzzleAttachmentImpl(ent, muzzlePos, effectDataAtt)
         if att then
             local dist = att.Pos:DistToSqr(muzzlePos)
             if dist <= MAX_EFFECTDATA_DIST * MAX_EFFECTDATA_DIST then
-                return effectDataAtt, {
-                    method = "effectdata",
-                    dist = math.sqrt(dist),
-                    name = attachmentName(cache, effectDataAtt),
-                }
+                -- The id is only accepted if no other attachment is clearly
+                -- closer to the shot origin (same rule as the LVS name).
+                local closerD = dist
+                if cache.atts then
+                    for i = 1, #cache.atts do
+                        local id = cache.atts[i] and cache.atts[i].id
+                        if id and id > 0 and id ~= effectDataAtt then
+                            local other = LVS_GRED_FX.GetAttachmentData(ent, id)
+                            if other then
+                                local d = other.Pos:DistToSqr(muzzlePos)
+                                if d < closerD then closerD = d end
+                            end
+                        end
+                    end
+                end
+                if math.sqrt(dist) - math.sqrt(closerD) < 4 then
+                    return effectDataAtt, {
+                        method = "effectdata",
+                        dist = math.sqrt(dist),
+                        name = attachmentName(cache, effectDataAtt),
+                    }
+                end
             end
         end
     end
