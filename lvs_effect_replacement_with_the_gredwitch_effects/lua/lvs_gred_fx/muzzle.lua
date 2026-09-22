@@ -22,6 +22,23 @@
     actual particle is always spawned with PATTACH_POINT_FOLLOW once an
     attachment has been resolved.
 
+    Moving vehicles. The muzzle origin in the EffectData is the SERVER's
+    attachment position at fire time. The effect plays on the client as soon
+    as it arrives, but the vehicle entity is rendered one interpolation
+    window behind, so comparing that origin against the rendered vehicle's
+    attachments drifts by velocity x cl_interp and picks the wrong id. Two
+    things fix that, with no guessing:
+      * the muzzle origin is brought into vehicle space with the vehicle's
+        NETWORK origin/angles (latest un-interpolated snapshot, i.e. the
+        pose the server fired from), not its render transform;
+      * attachment positions are read from a hidden, completely still
+        reference copy of the model (one per model path, parked at the
+        origin, pose parameters / bone manipulations / bodygroups /
+        sequence mirrored from the vehicle), so they are exact model-space
+        points that cannot be affected by the vehicle moving.
+    The world-space chain below is only used when a reference model cannot
+    be built for the entity's model.
+
     Performance:
       * attachment enumeration (GetAttachments) is cached per entity and
         invalidated only when the model changes,
@@ -54,6 +71,209 @@ local function isMuzzleName(name)
     local lower = string.lower(name)
     return string.find(lower, "muzzle", 1, true) ~= nil
         or string.find(lower, "barrel", 1, true) ~= nil
+end
+
+--[[---------------------------------------------------------------------------
+    Hidden reference models.
+-----------------------------------------------------------------------------]]
+local REF_MODELS = {}
+local REF_LIMIT  = 24
+local REF_ORIGIN = Vector(0, 0, -30000)
+
+local function dropRef(model)
+    local r = REF_MODELS[model]
+    if r then
+        if IsValid(r.ent) then r.ent:Remove() end
+        REF_MODELS[model] = nil
+    end
+end
+
+local function dropAllRefs()
+    for model in pairs(REF_MODELS) do dropRef(model) end
+end
+hook.Add("OnReloaded", "lvs_gred_fx_muzzle_refs", dropAllRefs)
+hook.Add("ShutDown",   "lvs_gred_fx_muzzle_refs", dropAllRefs)
+
+local function getRef(model)
+    if not isstring(model) or model == "" then return nil end
+    local r = REF_MODELS[model]
+    if r and IsValid(r.ent) then
+        r.lastUse = CurTime()
+        return r
+    end
+    if r then REF_MODELS[model] = nil end
+
+    local count, oldestModel, oldestTime = 0, nil, math.huge
+    for m, e in pairs(REF_MODELS) do
+        count = count + 1
+        if (e.lastUse or 0) < oldestTime then oldestTime, oldestModel = e.lastUse or 0, m end
+    end
+    if count >= REF_LIMIT and oldestModel then dropRef(oldestModel) end
+
+    local ent = ClientsideModel(model, RENDERGROUP_OTHER)
+    if not IsValid(ent) then return nil end
+    ent:SetNoDraw(true)
+    ent:DrawShadow(false)
+    ent:SetPos(REF_ORIGIN)
+    ent:SetAngles(angle_zero)
+
+    local ok, atts = pcall(ent.GetAttachments, ent)
+    if not ok or not istable(atts) or #atts == 0 then
+        ent:Remove()
+        return nil
+    end
+
+    local named, nameById = {}, {}
+    for i = 1, #atts do
+        local id, name = atts[i].id, atts[i].name
+        if id and id > 0 then
+            nameById[id] = name or ""
+            if isMuzzleName(name) then named[#named + 1] = id end
+        end
+    end
+
+    r = { ent = ent, atts = atts, named = named, nameById = nameById, lastUse = CurTime() }
+    REF_MODELS[model] = r
+    return r
+end
+
+-- Mirror everything LVS uses to pose a vehicle model: turret/track pose
+-- parameters (SetPoseParameter), bone pose parameters (ManipulateBone*),
+-- bodygroups, and the playing sequence.
+local function syncRefPose(ref, src)
+    local dst = ref.ent
+
+    local seq = src:GetSequence()
+    if seq and seq >= 0 and dst:GetSequence() ~= seq then dst:ResetSequence(seq) end
+    dst:SetCycle(src:GetCycle() or 0)
+
+    local n = src:GetNumPoseParameters() or 0
+    for i = 0, n - 1 do
+        local name = src:GetPoseParameterName(i)
+        if name then
+            -- Client GetPoseParameter is normalised 0..1; SetPoseParameter
+            -- takes real units, which is what LVS writes.
+            local lo, hi = src:GetPoseParameterRange(i)
+            local frac = src:GetPoseParameter(name) or 0
+            dst:SetPoseParameter(name, lo + (hi - lo) * frac)
+        end
+    end
+
+    for i = 0, (src:GetNumBodyGroups() or 1) - 1 do
+        if dst:GetBodygroup(i) ~= src:GetBodygroup(i) then dst:SetBodygroup(i, src:GetBodygroup(i)) end
+    end
+
+    local bones = src:GetBoneCount() or 0
+    if bones == dst:GetBoneCount() then
+        for b = 0, bones - 1 do
+            local a = src:GetManipulateBoneAngles(b) or angle_zero
+            if dst:GetManipulateBoneAngles(b) ~= a then dst:ManipulateBoneAngles(b, a) end
+            local p = src:GetManipulateBonePosition(b) or vector_origin
+            if dst:GetManipulateBonePosition(b) ~= p then dst:ManipulateBonePosition(b, p) end
+        end
+    end
+
+    dst:InvalidateBoneCache()
+    dst:SetupBones()
+end
+
+local function refAttPos(ref, attID)
+    local ok, att = pcall(ref.ent.GetAttachment, ref.ent, attID)
+    if not ok or not att or not isvector(att.Pos) then return nil end
+    return att.Pos - REF_ORIGIN
+end
+
+-- Muzzle origin in vehicle space using the latest networked snapshot pose
+-- (the one the server fired from), not the interpolated render pose.
+local function muzzleToModelSpace(ent, muzzlePos)
+    local org = ent.GetNetworkOrigin and ent:GetNetworkOrigin() or ent:GetPos()
+    local ang = ent.GetNetworkAngles and ent:GetNetworkAngles() or ent:GetAngles()
+    if not isvector(org) or org == vector_origin then org = ent:GetPos() end
+    if not isangle(ang) then ang = ent:GetAngles() end
+    return WorldToLocal(muzzlePos, angle_zero, org, ang)
+end
+
+local function lookupLvsMuzzleId(ent, cache)
+    local name = ent.TurretBallisticsMuzzleAttachment
+
+    if not isstring(name) or name == "" then
+        cache.lvsName, cache.lvsNameId = nil, nil
+        return 0
+    end
+
+    if cache.lvsName == name then
+        return cache.lvsNameId or 0
+    end
+
+    cache.lvsName = name
+
+    if not ent.LookupAttachment then
+        cache.lvsNameId = 0
+        return 0
+    end
+
+    local ok, id = pcall(ent.LookupAttachment, ent, name)
+    cache.lvsNameId = (ok and id and id > 0) and id or 0
+    return cache.lvsNameId
+end
+
+local function resolveViaReference(ent, muzzlePos, effectDataAtt, cache)
+    local ref = getRef(ent:GetModel())
+    if not ref then return nil end
+    syncRefPose(ref, ent)
+
+    local m = muzzleToModelSpace(ent, muzzlePos)
+
+    if effectDataAtt and effectDataAtt > 0 and (ref.nameById[effectDataAtt] or "") ~= "" then
+        local p = refAttPos(ref, effectDataAtt)
+        if p then
+            local d = m:DistToSqr(p)
+            if d <= MAX_EFFECTDATA_DIST * MAX_EFFECTDATA_DIST then
+                return effectDataAtt, { method = "ref_effectdata", dist = math.sqrt(d), name = ref.nameById[effectDataAtt] }
+            end
+        end
+    end
+
+    local lvsId = lookupLvsMuzzleId(ent, cache)
+    if lvsId > 0 then
+        local p = refAttPos(ref, lvsId)
+        if p then
+            local d = m:DistToSqr(p)
+            if d <= MAX_NAMED_DIST * MAX_NAMED_DIST then
+                return lvsId, { method = "ref_lvs_muzzle_name", dist = math.sqrt(d), name = ref.nameById[lvsId] }
+            end
+        end
+    end
+
+    local best, bestD, bestName = 0, MAX_NAMED_DIST * MAX_NAMED_DIST, nil
+    for i = 1, #ref.named do
+        local id = ref.named[i]
+        local p = refAttPos(ref, id)
+        if p then
+            local d = m:DistToSqr(p)
+            if d < bestD then best, bestD, bestName = id, d, ref.nameById[id] end
+        end
+    end
+    if best > 0 then
+        return best, { method = "ref_named", dist = math.sqrt(bestD), name = bestName }
+    end
+
+    best, bestD, bestName = 0, MAX_GENERIC_DIST * MAX_GENERIC_DIST, nil
+    for i = 1, #ref.atts do
+        local id = ref.atts[i].id
+        if id and id > 0 then
+            local p = refAttPos(ref, id)
+            if p then
+                local d = m:DistToSqr(p)
+                if d < bestD then best, bestD, bestName = id, d, ref.nameById[id] end
+            end
+        end
+    end
+    if best > 0 then
+        return best, { method = "ref_nearest", dist = math.sqrt(bestD), name = bestName or "" }
+    end
+
+    return 0, { method = "none", reason = "no attachment near muzzle position (model space)" }
 end
 
 --[[---------------------------------------------------------------------------
@@ -142,37 +362,14 @@ function LVS_GRED_FX.VehicleRoot(ent)
     return ent
 end
 
-local function lookupLvsMuzzleId(ent, cache)
-    local name = ent.TurretBallisticsMuzzleAttachment
-
-    if not isstring(name) or name == "" then
-        cache.lvsName, cache.lvsNameId = nil, nil
-        return 0
-    end
-
-    if cache.lvsName == name then
-        return cache.lvsNameId or 0
-    end
-
-    cache.lvsName = name
-
-    if not ent.LookupAttachment then
-        cache.lvsNameId = 0
-        return 0
-    end
-
-    local ok, id = pcall(ent.LookupAttachment, ent, name)
-    cache.lvsNameId = (ok and id and id > 0) and id or 0
-    return cache.lvsNameId
-end
-
 --[[---------------------------------------------------------------------------
     ResolveMuzzleAttachment( ent, muzzlePos, effectDataAtt )
 
     Returns: attachmentID, info
       info = {
-        method = "effectdata" | "lvs_muzzle_name" | "named_nearest" |
-                "local_cache" | "nearest" | "none",
+        method = "ref_effectdata" | "ref_lvs_muzzle_name" | "ref_named" |
+                "ref_nearest" | "effectdata" | "lvs_muzzle_name" |
+                "named_nearest" | "local_cache" | "nearest" | "none",
         dist   = resolution distance (or nil),
         name   = resolved attachment name (or nil),
       }
@@ -192,6 +389,13 @@ function LVS_GRED_FX.ResolveMuzzleAttachment(ent, muzzlePos, effectDataAtt)
     end
 
     local cache = GetCache(ent)
+
+    -- 0) Model-space resolution on the still reference model. Falls through
+    --    to the world-space chain only when no reference could be built.
+    local refId, refInfo = resolveViaReference(ent, muzzlePos, effectDataAtt, cache)
+    if refId ~= nil and refId > 0 then
+        return refId, refInfo
+    end
 
     -- 1) EffectData attachment id. LVS sometimes provides a muzzle attachment
     --    id, but it can be a stale/base-model id (e.g. lvs_2s38 sends id 1 —
