@@ -105,16 +105,145 @@ local function localKey(v)
         .. math.floor(v.z / LOCAL_CELL + 0.5)
 end
 
+--[[---------------------------------------------------------------------------
+    Static reference model.
+
+    One hidden ClientsideModel per vehicle. Its HULL never moves: it sits
+    parked far below the map with zero angles. Only the turret and gun are
+    posed on it -- the vehicle's turret yaw/pitch pose parameters and LVS
+    bone pose parameters (bone manipulations) -- and that pose is captured
+    once, at the moment the vehicle fires, then frozen. Between shots the
+    reference does not change at all, so every attachment lookup during a
+    shot's resolution (including the deferred pass a frame later) sees the
+    exact barrel pose the shot was fired from.
+
+    The muzzle point from the EffectData is moved into that reference's
+    frame with the vehicle's NETWORK transform (the server snapshot the shot
+    came from), and all of the resolver's distance tests below run there.
+    The resolver's logic, order, caches and tolerances are untouched.
+-----------------------------------------------------------------------------]]
+local REF_ORIGIN = Vector(0, 0, -30000)
+local REFS = setmetatable({}, { __mode = "k" })   -- vehicle -> { ent, model, shot }
+
+local function dropRef(veh)
+    local r = REFS[veh]
+    if r and IsValid(r.ent) then r.ent:Remove() end
+    REFS[veh] = nil
+end
+
+hook.Add("OnReloaded", "lvs_gred_fx_muzzle_refs", function()
+    for veh in pairs(REFS) do dropRef(veh) end
+end)
+hook.Add("EntityRemoved", "lvs_gred_fx_muzzle_refs", function(ent)
+    if REFS[ent] then dropRef(ent) end
+end)
+timer.Create("lvs_gred_fx_muzzle_refs_sweep", 10, 0, function()
+    for veh in pairs(REFS) do
+        if not IsValid(veh) then dropRef(veh) end
+    end
+end)
+
+local function turretPoseNames(veh)
+    local names = {}
+    local y = veh.TurretYawPoseParameterName
+    local p = veh.TurretPitchPoseParameterName
+    if isstring(y) and y ~= "" then names[y] = true end
+    if isstring(p) and p ~= "" then names[p] = true end
+    return names
+end
+
+-- Copies ONLY the turret/gun pose. Hull stays static.
+local function captureTurretPose(ref, veh)
+    ref:SetPos(REF_ORIGIN)
+    ref:SetAngles(angle_zero)
+
+    local wanted = turretPoseNames(veh)
+    for i = 0, (veh:GetNumPoseParameters() or 0) - 1 do
+        local name = veh:GetPoseParameterName(i)
+        if name and wanted[name] then
+            local lo, hi = veh:GetPoseParameterRange(i)
+            local frac = veh:GetPoseParameter(name) or 0
+            ref:SetPoseParameter(name, lo + (hi - lo) * frac)
+        end
+    end
+
+    -- LVS bone pose parameters (gun elevation / recoil on some models) are
+    -- written as bone manipulations on the vehicle; mirror them.
+    local bones = veh:GetBoneCount() or 0
+    if bones == ref:GetBoneCount() then
+        for b = 0, bones - 1 do
+            local a = veh:GetManipulateBoneAngles(b) or angle_zero
+            if ref:GetManipulateBoneAngles(b) ~= a then ref:ManipulateBoneAngles(b, a) end
+            local pos = veh:GetManipulateBonePosition(b) or vector_origin
+            if ref:GetManipulateBonePosition(b) ~= pos then ref:ManipulateBonePosition(b, pos) end
+        end
+    end
+
+    for i = 0, (veh:GetNumBodyGroups() or 1) - 1 do
+        local bg = veh:GetBodygroup(i)
+        if ref:GetBodygroup(i) ~= bg then ref:SetBodygroup(i, bg) end
+    end
+
+    ref:InvalidateBoneCache()
+    ref:SetupBones()
+end
+
+-- Returns the frozen reference for this vehicle, capturing the turret pose
+-- when `shotId` is new (one capture per shot; frozen afterwards).
+local function referenceFor(veh, shotId)
+    local model = veh:GetModel()
+    local r = REFS[veh]
+    if r and (not IsValid(r.ent) or r.model ~= model) then
+        dropRef(veh)
+        r = nil
+    end
+    if not r then
+        local ent = ClientsideModel(model, RENDERGROUP_OTHER)
+        if not IsValid(ent) then return nil end
+        ent:SetNoDraw(true)
+        ent:DrawShadow(false)
+        ent:SetPos(REF_ORIGIN)
+        ent:SetAngles(angle_zero)
+        r = { ent = ent, model = model, shot = nil }
+        REFS[veh] = r
+    end
+    if r.shot ~= shotId then
+        captureTurretPose(r.ent, veh)
+        r.shot = shotId
+    end
+    return r.ent
+end
+
+-- Muzzle world point -> the same point in the static reference's frame,
+-- using the vehicle's network (server snapshot) transform.
+local function toReferenceSpace(veh, worldPos)
+    local org = veh.GetNetworkOrigin and veh:GetNetworkOrigin() or nil
+    local ang = veh.GetNetworkAngles and veh:GetNetworkAngles() or nil
+    if not isvector(org) or org == vector_origin then org = veh:GetPos() end
+    if not isangle(ang) then ang = veh:GetAngles() end
+    local localPos = WorldToLocal(worldPos, angle_zero, org, ang)
+    return REF_ORIGIN + localPos
+end
+
+-- The entity whose attachments are being read during a resolve, and the
+-- shot id (one per fire event). Set by ResolveMuzzleAttachment.
+local ACTIVE_REF, ACTIVE_VEH = nil, nil
+
 -- Get world position (and name) of an attachment; returns nil on any failure.
+-- While a resolve is running for `ent`, positions come from its static
+-- reference model.
 function LVS_GRED_FX.GetAttachmentData(ent, attID)
     if not IsValid(ent) or not ent.GetAttachment then return nil end
     if not attID or attID <= 0 then return nil end
 
-    if ent.SetupBones then
+    local src = ent
+    if ent == ACTIVE_VEH and IsValid(ACTIVE_REF) then
+        src = ACTIVE_REF
+    elseif ent.SetupBones then
         pcall(ent.SetupBones, ent)
     end
 
-    local ok, att = pcall(ent.GetAttachment, ent, attID)
+    local ok, att = pcall(src.GetAttachment, src, attID)
     if not ok or not att or not att.Pos or not isvector(att.Pos) then
         return nil
     end
@@ -180,105 +309,44 @@ end
     attachmentID == 0 means "no usable attachment" — the caller must use the
     world-position fallback.
 -----------------------------------------------------------------------------]]
---[[---------------------------------------------------------------------------
-    Search area that moves with the vehicle.
+local SHOT_WINDOW = 0.05   -- fire events closer than this share one frozen pose
 
-    The muzzle origin in the EffectData is a world point from the server at
-    fire time. By the time the client resolves (and again in the deferred
-    re-resolve pass) the hull has moved and the turret may have turned, so a
-    fixed world point no longer sits on the barrel.
-
-    The point is pinned to the vehicle instead: converted to vehicle-local
-    space once with the vehicle's network (server-snapshot) transform -- the
-    pose the server fired from -- and re-derived from the CURRENT transform
-    on every lookup, so the search box rides with the hull. It is also
-    expressed relative to the nearest attachment at fire time, so it follows
-    that attachment's bone (turret traverse, barrel elevation, recoil)
-    between fire and resolve.
------------------------------------------------------------------------------]]
-local PINNED   = setmetatable({}, { __mode = "k" })
-local PIN_LIFE = 1.0
-
-local function netTransform(ent)
-    local org = ent.GetNetworkOrigin and ent:GetNetworkOrigin() or nil
-    local ang = ent.GetNetworkAngles and ent:GetNetworkAngles() or nil
-    if not isvector(org) or org == vector_origin then org = ent:GetPos() end
-    if not isangle(ang) then ang = ent:GetAngles() end
-    return org, ang
-end
-
-local function pinKey(v)
-    return math.floor(v.x / 4 + 0.5) .. "," .. math.floor(v.y / 4 + 0.5) .. "," .. math.floor(v.z / 4 + 0.5)
-end
-
-local function trackedMuzzlePos(ent, muzzlePos)
-    local pins = PINNED[ent]
-    if not pins then
-        pins = {}
-        PINNED[ent] = pins
-    end
-
-    local nOrg, nAng = netTransform(ent)
-    local hullLocal  = WorldToLocal(muzzlePos, angle_zero, nOrg, nAng)
-    local key = pinKey(hullLocal)
+local function resolveOnReference(ent, muzzlePos, effectDataAtt)
     local now = CurTime()
-
-    local pin = pins[key]
-    if pin and now - pin.t > PIN_LIFE then pin = nil end
-
-    if not pin then
-        pin = { t = now, hullLocal = hullLocal }
-
-        -- Nearest attachment at fire time; store the point in its frame.
-        -- Compared in hull space so the attachment (read from the rendered
-        -- entity) and the muzzle point (network pose) share one transform.
-        local bestId, bestD, bestOff = nil, MAX_NAMED_DIST * MAX_NAMED_DIST, nil
-        local ok, atts = pcall(ent.GetAttachments, ent)
-        if ok and istable(atts) then
-            if ent.SetupBones then pcall(ent.SetupBones, ent) end
-            for i = 1, #atts do
-                local id = atts[i].id
-                if id and id > 0 then
-                    local ok2, att = pcall(ent.GetAttachment, ent, id)
-                    if ok2 and att and isvector(att.Pos) and isangle(att.Ang) then
-                        local attLocalPos = ent:WorldToLocal(att.Pos)
-                        local attLocalAng = ent:WorldToLocalAngles(att.Ang)
-                        local d = attLocalPos:DistToSqr(hullLocal)
-                        if d < bestD then
-                            bestD  = d
-                            bestId = id
-                            bestOff = WorldToLocal(hullLocal, angle_zero, attLocalPos, attLocalAng)
-                        end
-                    end
-                end
-            end
-        end
-        if bestId then pin.attId, pin.attOff = bestId, bestOff end
-        pins[key] = pin
+    local shotId = ent._lvsGredShotId
+    if not shotId or now - (ent._lvsGredShotTime or 0) > SHOT_WINDOW then
+        shotId = now
+        ent._lvsGredShotId, ent._lvsGredShotTime = shotId, now
     end
 
-    if pin.attId then
-        local ok, att = pcall(ent.GetAttachment, ent, pin.attId)
-        if ok and att and isvector(att.Pos) and isangle(att.Ang) then
-            return LocalToWorld(pin.attOff, angle_zero, att.Pos, att.Ang)
-        end
-    end
-    return ent:LocalToWorld(pin.hullLocal)
+    local ref = referenceFor(ent, shotId)
+    if not IsValid(ref) then return nil end
+
+    ACTIVE_REF, ACTIVE_VEH = ref, ent
+    local ok, id, info = pcall(LVS_GRED_FX._ResolveMuzzleAttachmentImpl, ent, toReferenceSpace(ent, muzzlePos), effectDataAtt)
+    ACTIVE_REF, ACTIVE_VEH = nil, nil
+    if not ok then return nil end
+    return id, info
 end
 
 function LVS_GRED_FX.ResolveMuzzleAttachment(ent, muzzlePos, effectDataAtt)
     if not IsValid(ent) then return 0, { method = "none", reason = "invalid entity" } end
     if not isvector(muzzlePos) then return 0, { method = "none", reason = "invalid muzzle position" } end
 
-    -- Move the muzzle point with the vehicle (hull + turret/barrel bone)
-    -- before any of the distance tests below.
-    muzzlePos = trackedMuzzlePos(ent, muzzlePos)
+    local id, info = resolveOnReference(ent, muzzlePos, effectDataAtt)
+    if id ~= nil then return id, info end
+    -- No reference model could be created: resolve on the live entity.
+    return LVS_GRED_FX._ResolveMuzzleAttachmentImpl(ent, muzzlePos, effectDataAtt)
+end
+
+function LVS_GRED_FX._ResolveMuzzleAttachmentImpl(ent, muzzlePos, effectDataAtt)
 
     -- Debug: draw a blue box showing the named-nearest attachment search
     -- area (MAX_NAMED_DIST radius around the muzzle position), so it is easy
     -- to see where the resolver is looking for the barrel attachment.
     if cfg.DebugEnabled() and debugoverlay and debugoverlay.Box then
-        debugoverlay.Box(muzzlePos, Vector(MAX_NAMED_DIST, MAX_NAMED_DIST, MAX_NAMED_DIST), 0.5, Color(0, 100, 255, 60))
+        local boxPos = (ent == ACTIVE_VEH) and ent:LocalToWorld(muzzlePos - REF_ORIGIN) or muzzlePos
+        debugoverlay.Box(boxPos, Vector(MAX_NAMED_DIST, MAX_NAMED_DIST, MAX_NAMED_DIST), 0.5, Color(0, 100, 255, 60))
     end
 
     local cache = GetCache(ent)
@@ -358,7 +426,7 @@ function LVS_GRED_FX.ResolveMuzzleAttachment(ent, muzzlePos, effectDataAtt)
     --    whose muzzles share an 8-unit cell (e.g. BMD-4M autocannon + main
     --    cannon) from cross-returning each other's attachment id.
     if ent.WorldToLocal then
-        local localPos = ent:WorldToLocal(muzzlePos)
+        local localPos = (ent == ACTIVE_VEH) and (muzzlePos - REF_ORIGIN) or ent:WorldToLocal(muzzlePos)
         local key = localKey(localPos)
         if key then
             local cached = cache.byLocal[key]
@@ -396,7 +464,7 @@ function LVS_GRED_FX.ResolveMuzzleAttachment(ent, muzzlePos, effectDataAtt)
 
         if best > 0 then
             if ent.WorldToLocal then
-                local localPos = ent:WorldToLocal(muzzlePos)
+                local localPos = (ent == ACTIVE_VEH) and (muzzlePos - REF_ORIGIN) or ent:WorldToLocal(muzzlePos)
                 local key = localKey(localPos)
                 if key then
                     cache.byLocal[key] = { id = best, pos = localPos }
