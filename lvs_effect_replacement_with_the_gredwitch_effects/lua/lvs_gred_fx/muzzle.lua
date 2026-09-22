@@ -22,6 +22,17 @@
     actual particle is always spawned with PATTACH_POINT_FOLLOW once an
     attachment has been resolved.
 
+    Moving vehicles: the muzzle position in the EffectData was computed on
+    the server at fire time, while the client's copy of the vehicle is
+    rendered interpolation-delay behind. Comparing that stale world point
+    against the client's live attachment positions fails once the vehicle
+    moves at any speed. All distance tests are therefore done in MODEL
+    space, against a hidden static reference model (one per model string,
+    posed with the vehicle's pose parameters / bone manipulations). The
+    muzzle point is brought into that space with the vehicle's transform
+    over a small set of lag guesses along its velocity; the closest match
+    wins.
+
     Performance:
       * attachment enumeration (GetAttachments) is cached per entity and
         invalidated only when the model changes,
@@ -54,6 +65,194 @@ local function isMuzzleName(name)
     local lower = string.lower(name)
     return string.find(lower, "muzzle", 1, true) ~= nil
         or string.find(lower, "barrel", 1, true) ~= nil
+end
+
+--[[---------------------------------------------------------------------------
+    Hidden reference models. One ClientsideModel per model path, never drawn,
+    sitting at the world origin with zero angles so GetAttachment() returns
+    model-space positions directly. Its pose is synced from the firing
+    entity before every query so rotating turrets / elevating barrels are
+    honoured.
+-----------------------------------------------------------------------------]]
+local REF_MODELS = {}
+local REF_LIMIT  = 24
+local REF_ORIGIN = Vector(0, 0, -30000)
+
+local function dropRef(model)
+    local r = REF_MODELS[model]
+    if r then
+        if IsValid(r.ent) then r.ent:Remove() end
+        REF_MODELS[model] = nil
+    end
+end
+
+local function dropAllRefs()
+    for model in pairs(REF_MODELS) do dropRef(model) end
+end
+hook.Add("OnReloaded", "lvs_gred_fx_muzzle_refs", dropAllRefs)
+hook.Add("ShutDown",   "lvs_gred_fx_muzzle_refs", dropAllRefs)
+
+local function getRef(model)
+    if not isstring(model) or model == "" then return nil end
+    local r = REF_MODELS[model]
+    if r and IsValid(r.ent) then
+        r.lastUse = CurTime()
+        return r
+    end
+
+    -- Bound the pool: evict the least recently used entry.
+    local count, oldestModel, oldestTime = 0, nil, math.huge
+    for m, e in pairs(REF_MODELS) do
+        count = count + 1
+        if (e.lastUse or 0) < oldestTime then oldestTime, oldestModel = e.lastUse or 0, m end
+    end
+    if count >= REF_LIMIT and oldestModel then dropRef(oldestModel) end
+
+    local ent = ClientsideModel(model, RENDERGROUP_OTHER)
+    if not IsValid(ent) then return nil end
+    ent:SetNoDraw(true)
+    ent:DrawShadow(false)
+    ent:SetPos(REF_ORIGIN)
+    ent:SetAngles(angle_zero)
+
+    local atts = nil
+    local ok, res = pcall(ent.GetAttachments, ent)
+    if ok and istable(res) then atts = res end
+    if not atts or #atts == 0 then
+        ent:Remove()
+        return nil
+    end
+
+    local named, nameById = {}, {}
+    for i = 1, #atts do
+        local id, name = atts[i].id, atts[i].name
+        if id and id > 0 then
+            nameById[id] = name or ""
+            if isMuzzleName(name) then named[#named + 1] = id end
+        end
+    end
+
+    r = { ent = ent, atts = atts, named = named, nameById = nameById, lastUse = CurTime() }
+    REF_MODELS[model] = r
+    return r
+end
+
+-- Copy everything that can move an attachment in model space.
+local function syncRefPose(ref, src)
+    local dst = ref.ent
+
+    if src.GetNumPoseParameters then
+        local n = src:GetNumPoseParameters() or 0
+        for i = 0, n - 1 do
+            local name = src:GetPoseParameterName(i)
+            if name then
+                -- Client GetPoseParameter is normalised 0..1; Set takes real units.
+                local lo, hi = src:GetPoseParameterRange(i)
+                local frac = src:GetPoseParameter(name) or 0
+                dst:SetPoseParameter(name, lo + (hi - lo) * frac)
+            end
+        end
+    end
+
+    if src.GetNumBodyGroups then
+        for i = 0, (src:GetNumBodyGroups() or 1) - 1 do
+            dst:SetBodygroup(i, src:GetBodygroup(i))
+        end
+    end
+
+    local bones = src:GetBoneCount() or 0
+    if bones == dst:GetBoneCount() then
+        for b = 0, bones - 1 do
+            local a = src:GetManipulateBoneAngles(b) or angle_zero
+            if dst:GetManipulateBoneAngles(b) ~= a then dst:ManipulateBoneAngles(b, a) end
+            local p = src:GetManipulateBonePosition(b) or vector_origin
+            if dst:GetManipulateBonePosition(b) ~= p then dst:ManipulateBonePosition(b, p) end
+        end
+    end
+
+    dst:SetupBones()
+end
+
+-- Model-space position of an attachment on the reference (or nil).
+local function refAttPos(ref, attID)
+    local ok, att = pcall(ref.ent.GetAttachment, ref.ent, attID)
+    if not ok or not att or not isvector(att.Pos) then return nil end
+    return att.Pos - REF_ORIGIN
+end
+
+-- Candidate model-space positions for the muzzle point. The first is the
+-- plain transform; the rest back the point out along the vehicle's velocity
+-- by typical render-delay amounts so a moving vehicle still lines up.
+local LAG_STEPS = { 0, 0.05, 0.1, 0.15, 0.2, 0.3, -0.05 }
+local function muzzleLocalCandidates(ent, muzzlePos)
+    local out = { ent:WorldToLocal(muzzlePos) }
+    local vel = ent:GetVelocity()
+    if vel:LengthSqr() > 4 then
+        for i = 2, #LAG_STEPS do
+            out[#out + 1] = ent:WorldToLocal(muzzlePos - vel * LAG_STEPS[i])
+        end
+    end
+    return out
+end
+
+-- Smallest distance² from any candidate to a model-space point.
+local function bestDistSqr(cands, p)
+    local best = math.huge
+    for i = 1, #cands do
+        local d = cands[i]:DistToSqr(p)
+        if d < best then best = d end
+    end
+    return best
+end
+
+-- Reference-model resolution. Returns id, info or nil when the reference
+-- could not be built (caller falls back to world-space methods).
+local function resolveViaReference(ent, muzzlePos, effectDataAtt)
+    local ref = getRef(ent:GetModel())
+    if not ref then return nil end
+    syncRefPose(ref, ent)
+
+    local cands = muzzleLocalCandidates(ent, muzzlePos)
+
+    if effectDataAtt and effectDataAtt > 0 then
+        local p = refAttPos(ref, effectDataAtt)
+        if p then
+            local d = bestDistSqr(cands, p)
+            if d <= MAX_EFFECTDATA_DIST * MAX_EFFECTDATA_DIST then
+                return effectDataAtt, { method = "ref_effectdata", dist = math.sqrt(d), name = LVS_GRED_FX.AttachmentName(ent, effectDataAtt) }
+            end
+        end
+    end
+
+    local best, bestD, bestName = 0, MAX_NAMED_DIST * MAX_NAMED_DIST, nil
+    for i = 1, #ref.named do
+        local id = ref.named[i]
+        local p = refAttPos(ref, id)
+        if p then
+            local d = bestDistSqr(cands, p)
+            if d < bestD then best, bestD, bestName = id, d, ref.nameById[id] end
+        end
+    end
+    if best > 0 then
+        return best, { method = "ref_named", dist = math.sqrt(bestD), name = bestName }
+    end
+
+    best, bestD, bestName = 0, MAX_GENERIC_DIST * MAX_GENERIC_DIST, nil
+    for i = 1, #ref.atts do
+        local id = ref.atts[i].id
+        if id and id > 0 then
+            local p = refAttPos(ref, id)
+            if p then
+                local d = bestDistSqr(cands, p)
+                if d < bestD then best, bestD, bestName = id, d, ref.atts[i].name end
+            end
+        end
+    end
+    if best > 0 then
+        return best, { method = "ref_nearest", dist = math.sqrt(bestD), name = bestName or "" }
+    end
+
+    return 0, { method = "none", reason = "no attachment near muzzle position (model space)" }
 end
 
 --[[---------------------------------------------------------------------------
@@ -171,7 +370,8 @@ end
 
     Returns: attachmentID, info
       info = {
-        method = "effectdata" | "lvs_muzzle_name" | "named_nearest" |
+        method = "ref_effectdata" | "ref_named" | "ref_nearest" |
+                "effectdata" | "lvs_muzzle_name" | "named_nearest" |
                 "local_cache" | "nearest" | "none",
         dist   = resolution distance (or nil),
         name   = resolved attachment name (or nil),
@@ -192,6 +392,19 @@ function LVS_GRED_FX.ResolveMuzzleAttachment(ent, muzzlePos, effectDataAtt)
     end
 
     local cache = GetCache(ent)
+
+    -- 0) Model-space resolution against the hidden reference model. Immune to
+    --    the vehicle having moved between the server computing the muzzle
+    --    position and the client receiving it. Only falls through when the
+    --    reference model could not be created for this model at all.
+    local refId, refInfo = resolveViaReference(ent, muzzlePos, effectDataAtt)
+    if refId ~= nil then
+        if refId > 0 then
+            return refId, refInfo
+        end
+        -- Reference exists but found nothing: fall through to world-space
+        -- methods as a last attempt; they carry their own radius checks.
+    end
 
     -- 1) EffectData attachment id. LVS sometimes provides a muzzle attachment
     --    id, but it can be a stale/base-model id (e.g. lvs_2s38 sends id 1 —
