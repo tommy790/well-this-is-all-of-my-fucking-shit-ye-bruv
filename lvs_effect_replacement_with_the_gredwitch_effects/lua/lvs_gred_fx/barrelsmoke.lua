@@ -129,15 +129,40 @@ function LVS_GRED_FX_BARRELSMOKE.Spawn(ent, muzzlePos, att, pcf)
             spawnedAt = CurTime(),
             expires = CurTime() + life + 0.1,
         }
+        return byPcf[pcf]
     end
-    return life
+    return nil
 end
 
--- Plays a list of smoke PCFs one after another: entry N+1 starts the moment
--- entry N stops emitting. A single string behaves as before. Each shot gets
--- its own chain; a re-fire before the chain finished cancels the pending
--- stages of the old chain so the sequence restarts cleanly.
-local CHAINS = setmetatable({}, { __mode = "k" })
+-- Plays a list of smoke PCFs one after another. The hand-off is driven by
+-- the particle system itself: stage N+1 starts the frame stage N reports it
+-- has finished emitting (CNewParticleEffect:IsFinished, i.e. the PCF's own
+-- emitter durations ran out, or its StopEmission fired). Nothing here
+-- guesses how long a PCF emits for.
+local CHAINS   = setmetatable({}, { __mode = "k" })
+local WATCHING = {}
+
+-- A stage whose PCF never ends on its own (looping emitters) is cut at its
+-- configured life by StopAfter, so IsFinished always eventually flips.
+local function psysFinished(psys)
+    if not PsysValid(psys) then return true end
+    local ok, done = pcall(psys.IsFinished, psys)
+    if not ok then return true end
+    return done == true
+end
+
+hook.Add("Think", "lvs_gred_fx_smoke_chain", function()
+    if #WATCHING == 0 then return end
+    for i = #WATCHING, 1, -1 do
+        local w = WATCHING[i]
+        if not IsValid(w.ent) or w.chains[w.key] ~= w.token then
+            table.remove(WATCHING, i)
+        elseif psysFinished(w.psys) then
+            table.remove(WATCHING, i)
+            w.next()
+        end
+    end
+end)
 
 function LVS_GRED_FX_BARRELSMOKE.SpawnSequence(ent, muzzlePos, att, list)
     if not cfg.SmokeEnabled() or not IsValid(ent) then return end
@@ -156,11 +181,18 @@ function LVS_GRED_FX_BARRELSMOKE.SpawnSequence(ent, muzzlePos, att, list)
     local function stage(i)
         if i > #list then return end
         if not IsValid(ent) or chains[key] ~= token then return end
-        local life = LVS_GRED_FX_BARRELSMOKE.Spawn(ent, muzzlePos, att, list[i])
-        if i < #list then
-            -- Throttled (rapid re-fire) spawns return nil: the previous
-            -- stage's smoke is still running, so keep its timing.
-            timer.Simple(life or smokeLife(list[i]), function() stage(i + 1) end)
+        local rec = LVS_GRED_FX_BARRELSMOKE.Spawn(ent, muzzlePos, att, list[i])
+        if i >= #list then return end
+
+        if rec and rec.psys then
+            WATCHING[#WATCHING + 1] = {
+                ent = ent, chains = chains, key = key, token = token,
+                psys = rec.psys, next = function() stage(i + 1) end,
+            }
+        else
+            -- Throttled: the previous shot's stage-i system is still live,
+            -- so this shot's remaining stages ride on that chain instead.
+            chains[key] = token - 1
         end
     end
     stage(1)

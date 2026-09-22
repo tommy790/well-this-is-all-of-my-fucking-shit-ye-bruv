@@ -129,12 +129,10 @@ C.MuzzleRollFixByClass = {
 C.FlashLife        = 0.35  -- small arms / MG muzzle flash
 C.ArtilleryLife    = 0.6   -- cannon / haubitze muzzle flash
 C.SmokeLife        = 2.5   -- barrel smoke
--- Per-PCF emission length overrides. The vj narrow burst is the short first
--- stage of the cannon chain; the lingering muzzle smoke only starts once it
--- has stopped emitting.
-C.SmokeLifeByPcf   = {
-    vj_smoke_white_narrow = 0.8,
-}
+-- Per-PCF emission length overrides (cut-off, not hand-off: chained smoke
+-- advances when the running system reports IsFinished, this only bounds
+-- PCFs that would otherwise loop forever).
+C.SmokeLifeByPcf   = {}
 C.SmokeThrottle    = 0.35  -- min seconds between new smoke systems of the same
                            -- type per entity (rapid fire would otherwise stack)
 C.ChargeLife       = 0.35  -- laser charge duration (matches LVS)
