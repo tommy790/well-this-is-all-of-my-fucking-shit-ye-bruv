@@ -407,16 +407,40 @@ function LVS_GRED_FX._ResolveMuzzleAttachmentImpl(ent, muzzlePos, effectDataAtt)
         end
     end
 
-    -- 2) Authoritative LVS muzzle attachment name on the entity.
+    -- 2) LVS's own muzzle attachment (TurretBallisticsMuzzleAttachment).
+    --    Authoritative for the weapon it belongs to -- but several LVS
+    --    vehicles carry more than one gun on the turret and this name only
+    --    points at one of them (BMD-4M: "muzzle" is the 30mm autocannon, the
+    --    100mm cannon fires from a different attachment 15+ units away). The
+    --    shot origin IS the firing attachment's position, so if any other
+    --    attachment sits clearly closer to it, that one fired.
     local lvsId = lookupLvsMuzzleId(ent, cache)
     if lvsId > 0 then
         local att = LVS_GRED_FX.GetAttachmentData(ent, lvsId)
-        -- This is the attachment the server fired from; proximity is the
-        -- only check (a far one means this shot came from another weapon
-        -- slot on the same vehicle, e.g. a coax MG).
         if att then
             local dist = att.Pos:DistToSqr(muzzlePos)
             if dist <= MAX_NAMED_DIST * MAX_NAMED_DIST then
+                local closerId, closerD = 0, dist
+                if cache.atts then
+                    for i = 1, #cache.atts do
+                        local id = cache.atts[i] and cache.atts[i].id
+                        if id and id > 0 and id ~= lvsId then
+                            local other = LVS_GRED_FX.GetAttachmentData(ent, id)
+                            if other then
+                                local d = other.Pos:DistToSqr(muzzlePos)
+                                if d < closerD then closerD, closerId = d, id end
+                            end
+                        end
+                    end
+                end
+                -- "Clearly closer": at least 4 units nearer than LVS's muzzle.
+                if closerId > 0 and math.sqrt(dist) - math.sqrt(closerD) >= 4 then
+                    return closerId, {
+                        method = "lvs_muzzle_name_other_barrel",
+                        dist = math.sqrt(closerD),
+                        name = attachmentName(cache, closerId),
+                    }
+                end
                 return lvsId, {
                     method = "lvs_muzzle_name",
                     dist = math.sqrt(dist),
