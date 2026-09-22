@@ -8,7 +8,7 @@ including while driving fast and with the turret turned.
 **Fixed**
 - Fixed muzzle flash and smoke appearing on the wrong part of the vehicle (wheels, hull, suspension) when the gun was aimed down or close to the hull.
 - Fixed flashes attaching to the wrong barrel while the vehicle is moving fast with the turret turned.
-- Fixed vehicles with two guns on one turret (for example BMD-4M) always showing the cannon's flash on the autocannon.
+- Fixed vehicles with two guns on one turret (for example BMD-4M) mixing up which barrel the flash appears on.
 - Fixed a wrong barrel getting "stuck": once the addon picked a wrong spot at a given turret angle, it kept using it for every following shot.
 - Fixed the smoke canister (defence smoke) effect not showing — it now uses LVS's own smoke.
 - Fixed effects sometimes being created twice per shot after a Lua reload.

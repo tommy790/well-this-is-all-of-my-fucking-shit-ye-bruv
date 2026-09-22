@@ -42,6 +42,10 @@ local MAX_EFFECTDATA_DIST = 24
 local MAX_NAMED_DIST      = 32   -- allows a little turret-pivot offset
 local MAX_GENERIC_DIST    = 24
 local CLEARLY_CLOSER      = 4    -- another attachment must beat the candidate by this much
+-- An attachment this close to the shot origin IS the barrel tip. Only such an
+-- attachment may override LVS's named muzzle (BMD-4M: the cannon tip is a
+-- misnamed "sight"; the autocannon shot is 8u from it and must not use it).
+local AT_BARREL_DIST      = 3
 
 local function isMuzzleName(name)
     if not isstring(name) then return false end
@@ -353,7 +357,7 @@ local function resolveImpl(ent, muzzlePos, effectDataAtt)
         if att then
             local distSqr = att.Pos:DistToSqr(muzzlePos)
             if distSqr <= MAX_NAMED_DIST * MAX_NAMED_DIST then
-                local otherId, otherD = nearestOther(ent, cache, muzzlePos, lvsId, distSqr)
+                local otherId, otherD = nearestOther(ent, cache, muzzlePos, lvsId, AT_BARREL_DIST * AT_BARREL_DIST)
                 if otherId > 0 and math.sqrt(distSqr) - math.sqrt(otherD) >= CLEARLY_CLOSER then
                     return result(cache, otherId, "lvs_muzzle_name_other_barrel", otherD)
                 end
