@@ -194,11 +194,6 @@ C.WaterByEffect = {
 }
 
 C.ScrapePcf       = "muzzleflash_sparks_variant_6"
--- Continuous smoke cloud for smoke canisters (lvs_defence_smoke). The old
--- m203_smokegrenade was a one-shot puff, throttled so hard it looked like
--- nothing. doi_smoke_artillery is gred-precached, 0 missing materials, and a
--- continuous emitter — right for a canister that keeps re-firing.
-C.DefenceSmokePcf = "doi_smoke_artillery"
 C.StompDustPcf    = "doi_ceilingDust_large"
 C.RotorExplosionPcf = "high_explosive_air_2"
 

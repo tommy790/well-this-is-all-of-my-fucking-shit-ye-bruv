@@ -200,34 +200,6 @@ end
 local throttles = {}
 local throttleCount = 0
 
--- Persistent defence-smoke systems: one continuous smoke cloud per canister
--- position. Keyed by a position cell so multiple canisters coexist; a sweeper
--- fades systems a few seconds after the canister stops re-firing.
-local DEFENCE_SMOKE = {}
-
--- Loose psys validity (particle handles are not entities).
-local function PsysValidLoose(psys)
-    if not psys then return false end
-    if psys.IsValid then
-        local ok = pcall(function() return psys:IsValid() end)
-        return ok == true
-    end
-    return true
-end
-
-timer.Create("lvs_gred_fx_defence_smoke_sweep", 1, 0, function()
-    local now = CurTime()
-    for key, sys in pairs(DEFENCE_SMOKE) do
-        local ownerGone = isentity(key) and not IsValid(key)
-        if ownerGone or not PsysValidLoose(sys.psys) or (sys.expires or 0) < now then
-            if PsysValidLoose(sys.psys) then
-                pcall(function() sys.psys:StopEmission(false, false) end)
-            end
-            DEFENCE_SMOKE[key] = nil
-        end
-    end
-end)
-
 local function ThrottleAt(pos, keyName, window)
     if not isvector(pos) then return true end
 
@@ -379,44 +351,6 @@ local function dispatchOneShot(name, self, data)
         -- stack up during a long scrape. Throttled repeats count as handled.
         if ThrottleAt(pos, "scrape", 0.15) then
             return LVS_GRED_FX.SpawnWorldOneShot(cfg.ScrapePcf, pos, ang or angle_zero)
-        end
-        return true
-    end
-
-    if name == "lvs_defence_smoke" then
-        -- LVS re-fires this every 0.2s while the canister is active, from
-        -- the canister entity, which is moving (it is a launched grenade).
-        -- One persistent smoke system per canister, attached to it when
-        -- there is an entity, otherwise per position cell. The system is
-        -- spawned WITHOUT a life: an automatic StopEmission would kill it
-        -- while the "refresh" branch keeps a dead handle alive, which is
-        -- what made the cloud invisible. The sweeper fades it out once the
-        -- canister stops re-firing.
-        local key
-        if IsValid(ent) then
-            key = ent
-        else
-            key = "defence_smoke:" .. math.floor(pos.x / 50) .. "," .. math.floor(pos.y / 50) .. "," .. math.floor(pos.z / 50)
-        end
-        local sys = DEFENCE_SMOKE[key]
-
-        if sys and PsysValidLoose(sys.psys) and not sys.psys:IsFinished() then
-            sys.expires = CurTime() + 1.0
-            return true
-        end
-
-        local psys
-        if IsValid(ent) and LVS_GRED_FX.Preload(cfg.DefenceSmokePcf) then
-            local ok, res = pcall(CreateParticleSystem, ent, cfg.DefenceSmokePcf, PATTACH_ABSORIGIN_FOLLOW, 0, vector_origin)
-            if ok and PsysValidLoose(res) then psys = res end
-        end
-        if not psys then
-            psys = LVS_GRED_FX.SpawnWorld(cfg.DefenceSmokePcf, pos, angle_zero, nil, false)
-        end
-        if psys then
-            DEFENCE_SMOKE[key] = { psys = psys, expires = CurTime() + 1.0 }
-        elseif cfg.DebugEnabled() then
-            Debug("defence smoke: failed to create", cfg.DefenceSmokePcf)
         end
         return true
     end
