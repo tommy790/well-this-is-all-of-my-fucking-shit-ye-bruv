@@ -153,22 +153,24 @@ local function turretPoseNames(veh)
 end
 
 -- Copies ONLY the turret/gun pose. Hull stays static.
+-- The turret numbers come from LVS itself (GetTurretYaw/GetTurretPitch with
+-- the entity's offset/multiplier), written the same way sh_turret.lua does;
+-- reading the rendered entity's normalised pose parameter back wraps at
+-- +-180 and gives the wrong yaw at some angles.
 local function captureTurretPose(ref, veh)
     ref:SetPos(REF_ORIGIN)
     ref:SetAngles(angle_zero)
 
-    local wanted = turretPoseNames(veh)
-    for i = 0, (veh:GetNumPoseParameters() or 0) - 1 do
-        local name = veh:GetPoseParameterName(i)
-        if name and wanted[name] then
-            local lo, hi = veh:GetPoseParameterRange(i)
-            local frac = veh:GetPoseParameter(name) or 0
-            ref:SetPoseParameter(name, lo + (hi - lo) * frac)
-        end
+    local yawName, pitchName = veh.TurretYawPoseParameterName, veh.TurretPitchPoseParameterName
+    if isstring(yawName) and yawName ~= "" and veh.GetTurretYaw then
+        ref:SetPoseParameter(yawName, (veh.TurretYawOffset or 0) + (veh:GetTurretYaw() or 0) * (veh.TurretYawMul or 1))
+    end
+    if isstring(pitchName) and pitchName ~= "" and veh.GetTurretPitch then
+        ref:SetPoseParameter(pitchName, (veh.TurretPitchOffset or 0) + (veh:GetTurretPitch() or 0) * (veh.TurretPitchMul or 1))
     end
 
     -- LVS bone pose parameters (gun elevation / recoil on some models) are
-    -- written as bone manipulations on the vehicle; mirror them.
+    -- bone manipulations on the vehicle; mirror them.
     local bones = veh:GetBoneCount() or 0
     if bones == ref:GetBoneCount() then
         for b = 0, bones - 1 do
@@ -214,15 +216,42 @@ local function referenceFor(veh, shotId)
     return r.ent
 end
 
--- Muzzle world point -> the same point in the static reference's frame,
--- using the vehicle's network (server snapshot) transform.
-local function toReferenceSpace(veh, worldPos)
+-- Muzzle world point -> the same point in the static reference's frame.
+-- Not mapped through the hull transform (at speed the client hull is a
+-- tick away from the pose the server fired in). LVS fires from a real
+-- attachment, so the point is expressed relative to the live attachment it
+-- is closest to right now -- vehicle and turret motion cancel out because
+-- the attachment moved with them -- and re-applied to the same attachment
+-- on the frozen reference.
+local function toReferenceSpace(veh, ref, worldPos)
+    if veh.SetupBones then pcall(veh.SetupBones, veh) end
+    local ok, atts = pcall(veh.GetAttachments, veh)
+    local bestId, bestD, bestAtt = nil, math.huge, nil
+    if ok and istable(atts) then
+        for i = 1, #atts do
+            local id = atts[i].id
+            if id and id > 0 then
+                local ok2, att = pcall(veh.GetAttachment, veh, id)
+                if ok2 and att and isvector(att.Pos) and isangle(att.Ang) then
+                    local d = att.Pos:DistToSqr(worldPos)
+                    if d < bestD then bestD, bestId, bestAtt = d, id, att end
+                end
+            end
+        end
+    end
+    if bestId and bestD <= 128 * 128 then
+        local ok3, refAtt = pcall(ref.GetAttachment, ref, bestId)
+        if ok3 and refAtt and isvector(refAtt.Pos) and isangle(refAtt.Ang) then
+            local off = WorldToLocal(worldPos, angle_zero, bestAtt.Pos, bestAtt.Ang)
+            return LocalToWorld(off, angle_zero, refAtt.Pos, refAtt.Ang)
+        end
+    end
+    -- No attachment anywhere near: fall back to the hull transform.
     local org = veh.GetNetworkOrigin and veh:GetNetworkOrigin() or nil
     local ang = veh.GetNetworkAngles and veh:GetNetworkAngles() or nil
     if not isvector(org) or org == vector_origin then org = veh:GetPos() end
     if not isangle(ang) then ang = veh:GetAngles() end
-    local localPos = WorldToLocal(worldPos, angle_zero, org, ang)
-    return REF_ORIGIN + localPos
+    return REF_ORIGIN + WorldToLocal(worldPos, angle_zero, org, ang)
 end
 
 -- The entity whose attachments are being read during a resolve, and the
@@ -323,7 +352,7 @@ local function resolveOnReference(ent, muzzlePos, effectDataAtt)
     if not IsValid(ref) then return nil end
 
     ACTIVE_REF, ACTIVE_VEH = ref, ent
-    local ok, id, info = pcall(LVS_GRED_FX._ResolveMuzzleAttachmentImpl, ent, toReferenceSpace(ent, muzzlePos), effectDataAtt)
+    local ok, id, info = pcall(LVS_GRED_FX._ResolveMuzzleAttachmentImpl, ent, toReferenceSpace(ent, ref, muzzlePos), effectDataAtt)
     ACTIVE_REF, ACTIVE_VEH = nil, nil
     if not ok then return nil end
     return id, info
