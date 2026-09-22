@@ -274,9 +274,14 @@ function LVS_GRED_FX.ValidAttachment(ent, attID)
 end
 
 function LVS_GRED_FX.AttachmentName(ent, attID)
-    local att = LVS_GRED_FX.GetAttachmentData(ent, attID)
-    if not att then return "?" end
-    return att.Name or "?"
+    if not IsValid(ent) or not attID or attID <= 0 then return "?" end
+    local ok, atts = pcall(ent.GetAttachments, ent)
+    if ok and istable(atts) then
+        for i = 1, #atts do
+            if atts[i].id == attID then return atts[i].name or "?" end
+        end
+    end
+    return "?"
 end
 
 -- Resolve the vehicle root for an entity (gunner pods → their base vehicle).
@@ -287,6 +292,20 @@ function LVS_GRED_FX.VehicleRoot(ent)
         if IsValid(base) then return base end
     end
     return ent
+end
+
+-- Attachment name from the GetAttachments() list. GetAttachment(id) itself
+-- returns only Pos/Ang -- it never carries a Name -- so any check of
+-- att.Name on that result is always false. That was what disabled the
+-- EffectData and LVS-muzzle-name steps below and pushed every shot to the
+-- generic nearest search.
+local function attachmentName(cache, attID)
+    if not cache or not cache.atts then return "" end
+    for i = 1, #cache.atts do
+        local a = cache.atts[i]
+        if a and a.id == attID then return a.name or "" end
+    end
+    return ""
 end
 
 local function lookupLvsMuzzleId(ent, cache)
@@ -376,13 +395,13 @@ function LVS_GRED_FX._ResolveMuzzleAttachmentImpl(ent, muzzlePos, effectDataAtt)
     --    the muzzle position.
     if effectDataAtt and effectDataAtt > 0 then
         local att = LVS_GRED_FX.GetAttachmentData(ent, effectDataAtt)
-        if att and att.Name and att.Name ~= "" then
+        if att then
             local dist = att.Pos:DistToSqr(muzzlePos)
             if dist <= MAX_EFFECTDATA_DIST * MAX_EFFECTDATA_DIST then
                 return effectDataAtt, {
                     method = "effectdata",
                     dist = math.sqrt(dist),
-                    name = att.Name,
+                    name = attachmentName(cache, effectDataAtt),
                 }
             end
         end
@@ -392,15 +411,16 @@ function LVS_GRED_FX._ResolveMuzzleAttachmentImpl(ent, muzzlePos, effectDataAtt)
     local lvsId = lookupLvsMuzzleId(ent, cache)
     if lvsId > 0 then
         local att = LVS_GRED_FX.GetAttachmentData(ent, lvsId)
-        -- Require a real name AND proximity: an unnamed or far attachment is
-        -- not the actual barrel muzzle (e.g. BMD-4 "muzzle" id 18u away).
-        if att and att.Name and att.Name ~= "" then
+        -- This is the attachment the server fired from; proximity is the
+        -- only check (a far one means this shot came from another weapon
+        -- slot on the same vehicle, e.g. a coax MG).
+        if att then
             local dist = att.Pos:DistToSqr(muzzlePos)
             if dist <= MAX_NAMED_DIST * MAX_NAMED_DIST then
                 return lvsId, {
                     method = "lvs_muzzle_name",
                     dist = math.sqrt(dist),
-                    name = att.Name,
+                    name = attachmentName(cache, lvsId),
                 }
             end
         end
@@ -418,12 +438,12 @@ function LVS_GRED_FX._ResolveMuzzleAttachmentImpl(ent, muzzlePos, effectDataAtt)
         for i = 1, #cache.named do
             local id = cache.named[i]
             local att = LVS_GRED_FX.GetAttachmentData(ent, id)
-            if att and att.Name and att.Name ~= "" then
+            if att then
                 local d = att.Pos:DistToSqr(muzzlePos)
                 if d < bestDistSqr then
                     bestDistSqr = d
                     best = id
-                    bestName = att.Name
+                    bestName = attachmentName(cache, id)
                 end
             end
         end
@@ -456,7 +476,7 @@ function LVS_GRED_FX._ResolveMuzzleAttachmentImpl(ent, muzzlePos, effectDataAtt)
                     if d < bestDistSqr then
                         bestDistSqr = d
                         best = id
-                        bestName = att.Name or ""
+                        bestName = attachmentName(cache, id)
                     end
                 end
             end
