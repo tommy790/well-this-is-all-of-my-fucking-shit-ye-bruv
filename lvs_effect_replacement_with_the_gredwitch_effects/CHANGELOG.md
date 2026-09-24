@@ -13,7 +13,6 @@ including while driving fast and with the turret turned.
 - Fixed the smoke canister (defence smoke) effect not showing — it now uses LVS's own smoke.
 - Fixed effects sometimes being created twice per shot after a Lua reload.
 - Fixed fire, ammo-rack and trail effects being restarted every frame instead of once.
-- Fixed a rare crash on map change from effects that had already been removed.
 
 **Changed**
 - Cannon barrel smoke now plays in two stages: the sharp white burst first, and the lingering smoke only starts once the burst has finished. No more overlapping clouds.
