@@ -16,7 +16,6 @@ including while driving fast and with the turret turned.
 - Fixed fire, ammo-rack and trail effects being restarted every frame instead of once.
 
 **Changed**
-- Tracers are Gredwitch's own tracer particles flying LVS ballistics. The addon ships `particles/lvs_gred_tracers.pcf`, generated from gred's tracer definitions (same streak, colours, smoke and glow children) with the fixed-speed launcher replaced by the LVS round's own velocity and gravity, so the tracer drops with the round on ballistic guns and travels at the weapon's real projectile speed. Players without this addon still receive the plain straight gred beam from the server.
 - Which barrel a gun fires from is now read from the vehicle's own LVS weapon setup: the attachment named in the weapon's fire code is used when the shot really leaves from it, and multi-barrel guns (`"muzzle_" .. n`) are narrowed down by the line of fire. Twin and quad mounts whose code names one shared point and offsets each barrel from it are detected and resolved to the actual barrel instead of all flashing from that one point.
 - Smoke canisters now use the Gredwitch smoke cloud, refreshed every 3 seconds while the canister is active so it never piles up or lingers after it's spent.
 - Barrel detection now follows the line of fire: the barrel point that lies along the direction the shot went is chosen, instead of whichever point is simply nearest. Recoiled barrels, side-by-side barrels and sights next to the gun no longer confuse it.
