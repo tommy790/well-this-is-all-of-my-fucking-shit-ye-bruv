@@ -14,6 +14,11 @@
       below run against that frozen reference.
 
     How the id is chosen (first match wins)
+      0. The attachment(s) the vehicle's own LVS weapon code fires from
+         (weaponcode.lua reads them out of the selected weapon's Attack
+         function). One name is final; a multi-barrel set is narrowed by
+         the barrel line of the shot. Everything below is the fallback for
+         weapons whose code fires from a plain vector.
       1. The attachment id LVS put in the EffectData, if it is close to the
          shot origin and no other attachment is clearly closer. (LVS often
          sends a stale base-model id here -- id 1 on the 2S1 is a suspension
@@ -348,12 +353,17 @@ local AXIS_PERP_MAX   = 4     -- max sideways offset from the barrel line
 local AXIS_ALONG_MIN  = -12   -- attachment slightly behind the origin
 local AXIS_ALONG_MAX  = 24    -- attachment ahead of a recoiled origin
 
-local function resolveByAxis(ent, cache, muzzlePos, dir)
+local function resolveByAxis(ent, cache, muzzlePos, dir, onlyIds)
     if not cache.atts then return 0 end
+    local allowed = nil
+    if onlyIds then
+        allowed = {}
+        for i = 1, #onlyIds do allowed[onlyIds[i]] = true end
+    end
     local bestId, bestScore, bestPerp = 0, math.huge, 0
     for i = 1, #cache.atts do
         local id = cache.atts[i] and cache.atts[i].id
-        if id and id > 0 then
+        if id and id > 0 and (not allowed or allowed[id]) then
             local att = LVS_GRED_FX.GetAttachmentData(ent, id)
             if att then
                 local v = att.Pos - muzzlePos
@@ -372,13 +382,52 @@ local function resolveByAxis(ent, cache, muzzlePos, dir)
     return bestId, bestPerp
 end
 
-local function resolveImpl(ent, muzzlePos, effectDataAtt, dir)
+-- Attachments named by the weapon's own LVS Attack code. One id is the
+-- answer outright. Several (a "muzzle" .. n multi-barrel, or a helper that
+-- names both guns of a mount) are told apart by which one the shot's own
+-- barrel line passes through; failing that, the one the shot came from.
+local CODE_MAX_DIST = 64
+
+local function resolveByWeaponCode(ent, cache, muzzlePos, dir, code)
+    local ids = code.ids
+    if #ids == 1 then
+        local att = LVS_GRED_FX.GetAttachmentData(ent, ids[1])
+        if not att then return 0 end
+        local id, info = result(cache, ids[1], "weapon_code", att.Pos:DistToSqr(muzzlePos))
+        info.reader = code.reader
+        return id, info
+    end
+    if dir then
+        local id, perp = resolveByAxis(ent, cache, muzzlePos, dir, ids)
+        if id > 0 then
+            local att = LVS_GRED_FX.GetAttachmentData(ent, id)
+            local _, info = result(cache, id, "weapon_code_axis", att and att.Pos:DistToSqr(muzzlePos) or 0)
+            info.perp, info.reader = perp, code.reader
+            return id, info
+        end
+    end
+    local id, d = nearestOf(ent, ids, muzzlePos, CODE_MAX_DIST * CODE_MAX_DIST)
+    if id > 0 then
+        local _, info = result(cache, id, "weapon_code_nearest", d)
+        info.reader = code.reader
+        return id, info
+    end
+    return 0
+end
+
+local function resolveImpl(ent, muzzlePos, effectDataAtt, dir, code)
     if cfg.DebugEnabled() and debugoverlay and debugoverlay.Box then
         local boxPos = (ent == ACTIVE_VEH) and ent:LocalToWorld(muzzlePos - REF_ORIGIN) or muzzlePos
         debugoverlay.Box(boxPos, Vector(MAX_NAMED_DIST, MAX_NAMED_DIST, MAX_NAMED_DIST), 0.5, Color(0, 100, 255, 60))
     end
 
     local cache = GetCache(ent)
+
+    -- What the vehicle's weapon configuration says fires from where.
+    if code then
+        local id, info = resolveByWeaponCode(ent, cache, muzzlePos, dir, code)
+        if id > 0 then return id, info end
+    end
 
     -- 0) Barrel axis (needs the bullet direction).
     if dir then
@@ -456,7 +505,7 @@ local function resolveImpl(ent, muzzlePos, effectDataAtt, dir)
     return 0, { method = "none", reason = "no attachment near muzzle position" }
 end
 
-local function resolveOnReference(ent, muzzlePos, effectDataAtt, dir)
+local function resolveOnReference(ent, muzzlePos, effectDataAtt, dir, code)
     local now = CurTime()
     local shotId = ent._lvsGredShotId
     if not shotId or now - (ent._lvsGredShotTime or 0) > SHOT_WINDOW then
@@ -470,7 +519,7 @@ local function resolveOnReference(ent, muzzlePos, effectDataAtt, dir)
     ACTIVE_REF, ACTIVE_VEH = ref, ent
     local refPos, refTip = toReferenceSpace(ent, ref, muzzlePos, dir and (muzzlePos + dir * 16) or nil)
     local refDir = refTip and (refTip - refPos):GetNormalized() or nil
-    local ok, id, info = pcall(resolveImpl, ent, refPos, effectDataAtt, refDir)
+    local ok, id, info = pcall(resolveImpl, ent, refPos, effectDataAtt, refDir, code)
     ACTIVE_REF, ACTIVE_VEH = nil, nil
     if not ok then return nil end
     return id, info
@@ -481,7 +530,8 @@ end
 
     Returns: attachmentID, info
       info = {
-        method = "barrel_axis" | "remembered" | "effectdata" | "lvs_muzzle_name"
+        method = "weapon_code" | "weapon_code_axis" | "weapon_code_nearest"
+               | "barrel_axis" | "remembered" | "effectdata" | "lvs_muzzle_name"
                | "lvs_muzzle_name_other_barrel" | "named_nearest" | "nearest" | "none",
         dist   = distance from the shot origin (nil for "none"),
         name   = attachment name ("" when unnamed),
@@ -533,20 +583,26 @@ local function rememberGun(ent, muzzlePos, gunKey, id)
     if #entries > 32 then table.remove(entries, 1) end
 end
 
-function LVS_GRED_FX.ResolveMuzzleAttachment(ent, muzzlePos, effectDataAtt, gunKey, dir)
+function LVS_GRED_FX.ResolveMuzzleAttachment(ent, muzzlePos, effectDataAtt, gunKey, dir, weaponEnt)
     if not IsValid(ent) then return 0, { method = "none", reason = "invalid entity" } end
     if not isvector(muzzlePos) then return 0, { method = "none", reason = "invalid muzzle position" } end
     if isvector(dir) and dir:LengthSqr() > 0.0001 then dir = dir:GetNormalized() else dir = nil end
 
-    if isstring(gunKey) then
+    -- The entity LVS fired the effect on (gunner pod or the vehicle itself)
+    -- carries the selected weapon; `ent` is the root the attachments live on.
+    local code = LVS_GRED_FX_WEAPONCODE.AttachmentsFor(IsValid(weaponEnt) and weaponEnt or ent, ent)
+
+    -- Per-gun memory only stands in for the geometric fallback; a weapon
+    -- whose code names its attachment is resolved from that every time.
+    if not code and isstring(gunKey) then
         local id, info = cachedForGun(ent, muzzlePos, gunKey)
         if id then return id, info end
     end
 
-    local id, info = resolveOnReference(ent, muzzlePos, effectDataAtt, dir)
+    local id, info = resolveOnReference(ent, muzzlePos, effectDataAtt, dir, code)
     if id == nil then
         -- Reference model could not be created: resolve on the live entity.
-        id, info = resolveImpl(ent, muzzlePos, effectDataAtt, dir)
+        id, info = resolveImpl(ent, muzzlePos, effectDataAtt, dir, code)
     end
 
     -- Only a confident result is remembered: an attachment that was right at

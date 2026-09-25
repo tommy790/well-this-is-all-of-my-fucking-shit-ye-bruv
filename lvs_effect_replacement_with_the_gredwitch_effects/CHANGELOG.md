@@ -16,6 +16,7 @@ including while driving fast and with the turret turned.
 - Fixed fire, ammo-rack and trail effects being restarted every frame instead of once.
 
 **Changed**
+- Which barrel a gun fires from is now read from the vehicle's own LVS weapon setup: the attachment named in the weapon's fire code is used directly, and multi-barrel guns (`"muzzle_" .. n`) are narrowed down by the line of fire. Geometric matching is only used for weapons whose code fires from a plain position with no attachment at all.
 - Smoke canisters now use the Gredwitch smoke cloud, refreshed every 3 seconds while the canister is active so it never piles up or lingers after it's spent.
 - Barrel detection now follows the line of fire: the barrel point that lies along the direction the shot went is chosen, instead of whichever point is simply nearest. Recoiled barrels, side-by-side barrels and sights next to the gun no longer confuse it.
 - Cannon barrel smoke now plays in two stages: the sharp white burst first, and the lingering smoke only starts once the burst has finished. No more overlapping clouds.

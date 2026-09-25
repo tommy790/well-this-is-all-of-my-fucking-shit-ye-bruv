@@ -175,13 +175,14 @@ function LVS_GRED_FX_MUZZLEFLASH.Spawn(effectName, self, data)
 
     -- Resolve the correct muzzle attachment (never "attachment 1" guessing);
     -- remembered per vehicle + gun after the first shot.
-    local att, info = LVS_GRED_FX.ResolveMuzzleAttachment(rootEnt, muzzlePos, dataAtt, gunKey, normal)
+    local att, info = LVS_GRED_FX.ResolveMuzzleAttachment(rootEnt, muzzlePos, dataAtt, gunKey, normal, ent)
 
     if cfg.DebugEnabled() then
         Debug("muzzle attachment:", "id:", att, "method:", info and info.method,
             "dist:", info and info.dist and string.format("%.1f", info.dist) or "n/a",
             "off-axis:", info and info.perp and string.format("%.1f", info.perp) or "-",
-            "name:", info and info.name or "?")
+            "name:", info and info.name or "?",
+            "reader:", info and info.reader or "-")
     end
 
     local isArtillery = effectName == "lvs_haubitze_muzzle"
@@ -281,12 +282,13 @@ function LVS_GRED_FX_MUZZLEFLASH.SpawnGeneric(effectName, self, data)
     if not isvector(muzzlePos) or not IsValid(ent) then return false end
 
     local ang = isvector(normal) and normal:Angle() or nil
-    local att, info = LVS_GRED_FX.ResolveMuzzleAttachment(ent, muzzlePos, dataAtt, nil, normal)
+    local rootEnt = LVS_GRED_FX.VehicleRoot(ent)
+    local att, info = LVS_GRED_FX.ResolveMuzzleAttachment(rootEnt, muzzlePos, dataAtt, nil, normal, ent)
 
     if cfg.DebugEnabled() then
         Debug("generic muzzle effect:", effectName, "att:", att,
             "method:", info and info.method, "dist:", info and info.dist)
     end
 
-    return spawnGenericMuzzle(ent, muzzlePos, ang, att)
+    return spawnGenericMuzzle(rootEnt, muzzlePos, ang, att)
 end

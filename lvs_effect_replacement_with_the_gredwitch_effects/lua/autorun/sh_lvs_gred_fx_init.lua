@@ -17,6 +17,7 @@ local CLIENT_FILES = {
     "lvs_gred_fx/config.lua",
     "lvs_gred_fx/debug.lua",
     "lvs_gred_fx/particles.lua",
+    "lvs_gred_fx/weaponcode.lua",
     "lvs_gred_fx/muzzle.lua",
     "lvs_gred_fx/tracer.lua",
     "lvs_gred_fx/muzzleflash.lua",
