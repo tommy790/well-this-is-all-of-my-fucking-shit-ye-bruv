@@ -166,6 +166,25 @@ beyond six, leaving anchors that could never fail — every spike is now assigne
 wave; loft tumble torque is mass-scaled; the redundant per-frame `Think` cleanup hook
 was folded into the 0.05s loft timer.
 
+**Follow-up changes (in-game testing):**
+- Raise is the reverse of lowering: the springs are let out over `LowerTime`
+  (`Anchor.UpdateRaise`) and a short settle precedes `DetachAll`, instead of every
+  constraint vanishing in one tick and the suspension kicking the chassis up.
+- Drive lock: from lowering until back at idle the handbrake is re-asserted every
+  tick (`SetHandbrake(true)` is not sticky on `prop_vehicle_jeep`) and throttle,
+  steering and brake inputs are masked in `StartCommand` (`TIV_DriveLock`). The mask
+  does not include duck, so the camera toggle still works. All gated by
+  `tiv_deploy_handbrake`.
+- Physgun: freezing the vehicle sets `veh.TIV_PlayerFrozen`; the freeze watchdog no
+  longer force-unfreezes it and deploy is refused while frozen.
+- Stowed spikes are parented with `MOVETYPE_NONE` and no constraints to the chassis
+  (an earlier chassis weld pinned the jeep). Planting freezes the spike first, then
+  unparents into `VPHYSICS` below ground, then world-welds (`type = "groundweld"`), so
+  the solver never ejects a freshly planted spike. Sheared spikes keep only the
+  NoCollide and tear out.
+- `IsValid(game.GetWorld())` is false in GMod; the springs were never created until the
+  world-entity check was removed.
+
 **Compat considerations:** `sv_wire` emergency release, `sv_freeze_audit` watchdog,
 `sv_custom_components` armor NoCollides and `E2 tiv.lua` were checked against the new
 fields and all work unchanged. `SpikeAnim.CancelVehicleJobs` is now exported for them.
