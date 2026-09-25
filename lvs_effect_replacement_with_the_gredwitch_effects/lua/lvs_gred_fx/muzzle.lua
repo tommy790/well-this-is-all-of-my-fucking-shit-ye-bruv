@@ -89,6 +89,7 @@ local function GetCache(ent)
         nameById  = nameById,
         lvsNameId = nil,
         lvsName   = nil,
+        guns      = {},   -- gunKey -> attachment id remembered from that gun's first shot
     }
 
     ent._lvsGredMuzzleCache = cache
@@ -413,12 +414,41 @@ end
     attachmentID == 0 means no usable attachment; the caller falls back to
     the world position.
 -----------------------------------------------------------------------------]]
-function LVS_GRED_FX.ResolveMuzzleAttachment(ent, muzzlePos, effectDataAtt)
+-- A gun that was resolved once on a vehicle keeps that attachment for every
+-- later shot (gunKey = effect + caliber + flash pcf, supplied by the caller),
+-- so recoil, turret pose or vehicle speed can never re-pick a different id
+-- mid-burst. The remembered id is dropped if it stops being anywhere near
+-- the shot (a different gun sharing the same key, or a model swap).
+local CACHED_MAX_DIST = 24
+
+local function cachedForGun(ent, muzzlePos, gunKey)
+    local cache = GetCache(ent)
+    local id = cache.guns[gunKey]
+    if not id then return nil end
+    local att = LVS_GRED_FX.GetAttachmentData(ent, id)
+    if not att then cache.guns[gunKey] = nil return nil end
+    local d = att.Pos:Distance(muzzlePos)
+    if d > CACHED_MAX_DIST then cache.guns[gunKey] = nil return nil end
+    return id, { method = "remembered", dist = d, name = attachmentName(cache, id) }
+end
+
+function LVS_GRED_FX.ResolveMuzzleAttachment(ent, muzzlePos, effectDataAtt, gunKey)
     if not IsValid(ent) then return 0, { method = "none", reason = "invalid entity" } end
     if not isvector(muzzlePos) then return 0, { method = "none", reason = "invalid muzzle position" } end
 
+    if isstring(gunKey) then
+        local id, info = cachedForGun(ent, muzzlePos, gunKey)
+        if id then return id, info end
+    end
+
     local id, info = resolveOnReference(ent, muzzlePos, effectDataAtt)
-    if id ~= nil then return id, info end
-    -- Reference model could not be created: resolve on the live entity.
-    return resolveImpl(ent, muzzlePos, effectDataAtt)
+    if id == nil then
+        -- Reference model could not be created: resolve on the live entity.
+        id, info = resolveImpl(ent, muzzlePos, effectDataAtt)
+    end
+
+    if isstring(gunKey) and id and id > 0 then
+        GetCache(ent).guns[gunKey] = id
+    end
+    return id, info
 end

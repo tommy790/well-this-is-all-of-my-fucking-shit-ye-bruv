@@ -21,6 +21,7 @@ including while driving fast and with the turret turned.
 - Tracer path calculation on the server is lighter (half the trace work per machine-gun round).
 
 **Added**
+- Each gun on a vehicle remembers which barrel point it uses after its first shot, so a recoiling barrel or a turning turret can't make later shots jump to a different spot.
 - Debug output now shows the real attachment name and how far it was from the shot, making problems easy to report.
 
 **Removed**
