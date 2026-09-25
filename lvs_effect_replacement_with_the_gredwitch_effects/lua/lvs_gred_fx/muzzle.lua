@@ -435,7 +435,10 @@ end
 -- same key from several places, so each barrel gets its own memory. A turned
 -- turret moves the local origin and simply resolves fresh for that pose.
 local CACHED_LOCAL_RADIUS = 10   -- recoil travel is a few units; barrels sit further apart
-local CACHED_MAX_DIST     = 24
+-- A remembered id is trusted only while it still sits on the shot. Local-space
+-- keying alone is not enough: a turned turret can put another barrel's old
+-- entry within the radius, and a 13u-spaced twin would inherit the wrong id.
+local CACHED_MAX_DIST     = 6
 local REMEMBER_MAX_DIST   = 4    -- learn only from shots that landed on the attachment
 
 local function cachedForGun(ent, muzzlePos, gunKey)
