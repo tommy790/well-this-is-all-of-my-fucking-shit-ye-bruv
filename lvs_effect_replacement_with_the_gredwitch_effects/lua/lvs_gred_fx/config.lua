@@ -128,6 +128,7 @@ C.MuzzleRollFixByClass = {
 -- One-shot particle lifetimes (seconds).
 C.FlashLife        = 0.35  -- small arms / MG muzzle flash
 C.ArtilleryLife    = 0.6   -- cannon / haubitze muzzle flash
+C.FlashMaxAttachOffset = 6  -- flash spawns at the shot origin when the nearest attachment is further than this
 C.SmokeLife        = 2.5   -- barrel smoke
 -- Per-PCF emission length overrides (cut-off, not hand-off: chained smoke
 -- advances when the running system reports IsFinished, this only bounds
