@@ -1,41 +1,35 @@
 --[[---------------------------------------------------------------------------
     LVS → Gredwitch FX : tracer system (client-side)
 
-    Gredwitch's tracer particle, riding LVS's ballistics.
+    Gredwitch's tracer PCF particles, flying LVS's ballistics.
 
-    The gred tracer (gred_tracers_<color>_<caliber>, gred_particles.pcf) is
-    one render_sprite_trail particle: material particles/ins_tracer, sheet
-    sequence 2 or 3, radius 25, trail = 0.25 s of velocity clamped to
-    2000 u with a 0.22 s length fade-in, colour1/colour2 per tracer colour.
-    Its motion is baked into the particle system: "move particles between
-    2 control points" gives it a fixed speed at emission and a lifetime
-    equal to the distance to the end point, and Movement Basic has no
-    gravity. Nothing outside the system can bend or slow it afterwards, so
-    that particle cannot follow a dropping, LVS-speed round.
+    gred's gred_tracers_<color>_<caliber> (gred_particles.pcf) cannot be
+    steered once emitted: "move particles between 2 control points" fixes
+    its speed at emission and sets its lifetime to the distance to CP1, and
+    its Movement Basic has no gravity. So this addon ships
+    particles/lvs_gred_tracers.pcf, generated from gred's file by
+    tools/pcf_tool.py: every gred tracer definition copied byte for byte
+    (renderer, sprite trail, colours, sheet sequences, smoke and glow
+    children) with exactly three edits:
 
-    What can follow the round is the way Gredwitch draws the tracer of its
-    own ballistic shells (entities/base_shell/cl_init.lua ENT:Think): a
-    ParticleEmitter fed every frame at the shell's real position with the
-    shell's velocity. That mechanism is used here with the LVS client
-    bullet (LVS:GetBullet(index), simulated by LVS with the weapon's
-    Velocity and, for EnableBallistics rounds, gravity) in place of the
-    shell, and with the gred tracer particle's own ingredients as the
-    emitted sprite:
+      * the move-between-points initializer is removed,
+      * "Velocity Random" reads 1 x the CP0 forward vector, and we hand it
+        forward = direction * speed UNNORMALISED, so the particle leaves at
+        the LVS round's own velocity,
+      * lifetime 5 s (LVS's cap); two variants: "<name>" whose Movement
+        Basic gravity is (0,0,-1200) and "<name>_flat" with none.
 
-      * material: particles/ins_tracer, cropped to the pcf's sheet strip by
-        $basetexturetransform, so the sprite is the very same streak image,
-      * width 25 (pcf radius), drawn velocity-aligned with length
-        min(speed * 0.25, 2000) ramping in over 0.22 s (pcf sprite trail),
-      * colour picked once per shot between the pcf's colour1/colour2,
-      * velocity and position from LVS's own flight formula every frame.
-
-    Not reproduced: the pcf's smoke rope and glow children (0.5 s / 0.1 s
-    after launch), which are Position From Parent Particles systems.
+    Why -1200: LVS flies EnableBallistics rounds as Src + Dir*V*t + g*t^2
+    with g = physenv.GetGravity() (-600 at default sv_gravity), so the
+    round's acceleration is 2g. The particle integrates the same motion,
+    so the tracer stays on the LVS round for the whole flight. With a
+    non-default sv_gravity the drop drifts; that is logged once.
 
     The effect instance lives exactly as long as the LVS bullet (the
     wrapper's silent original Think still fires lvs_bullet_impact_ap at
-    LVS's timing), and each shot is recorded so the muzzle-flash and impact
-    systems can pair caliber/PCF with it.
+    LVS's timing); when LVS removes the bullet the particle system is
+    destroyed, as gred does at its own end point. Each shot is recorded so
+    the muzzle-flash and impact systems can pair caliber/PCF with it.
 -----------------------------------------------------------------------------]]
 
 if not CLIENT then return end
@@ -177,82 +171,44 @@ local function getBullet(id)
 end
 
 --[[---------------------------------------------------------------------------
-    gred_tracers_* particle parameters (gred_particles.pcf) and the
-    ins_tracer sheet strips they use (sequences 2 and 3, from the VTF sheet).
+    Generated tracer systems.
 -----------------------------------------------------------------------------]]
-local TRACER_RADIUS   = 25      -- Radius Random 25/25
-local TRAIL_SECONDS   = 0.25    -- Trail Length Random 0.25/0.25
-local TRAIL_MAX       = 2000    -- render_sprite_trail max length
-local LENGTH_FADE_IN  = 0.22    -- render_sprite_trail length fade in time
-local MIN_SPEED       = 5000    -- base_shell: no tracer under l = 5 (v * 0.001)
-local SHEET_STRIPS = {          -- u0, u1 of the strip; v spans the full sheet
-    { 0.251, 0.374 },
-    { 0.376, 0.499 },
-}
-local COLORS = {                -- Color Random color1 / color2
-    red    = { { 255, 142, 142 }, { 255, 137, 137 } },
-    green  = { { 180, 255, 214 }, { 180, 255, 214 } },
-    white  = { { 255, 255, 255 }, { 255, 255, 255 } },
-    yellow = { { 241, 243,  31 }, { 194, 196,  35 } },
-}
+local PCF_FILE = "particles/lvs_gred_tracers.pcf"
+local TRACER_COLORS   = { "red", "green", "white", "yellow" }
+local TRACER_CALIBERS = { "7mm", "12mm", "20mm", "30mm", "40mm" }
 
--- Which end of the streak leads. The bright end of the ins_tracer strip is
--- at the bottom of the sheet (v -> 1); the emitter draws length particles
--- with v = 1 at the leading end, so 0 is the pcf orientation. Flip if the
--- bright end trails on your build.
-local CvarFlip = GetConVar("lvs_gred_fx_tracer_flip")
-    or CreateClientConVar("lvs_gred_fx_tracer_flip", "0", true, false, "Flip the tracer streak so its bright end leads if it appears reversed.")
-
-local STRIP_MATS = {}
-local function stripMaterial(index, flip)
-    local key = index .. (flip and "f" or "n")
-    local mat = STRIP_MATS[key]
-    if mat then return mat end
-    local u0, u1 = SHEET_STRIPS[index][1], SHEET_STRIPS[index][2]
-    local scaleU = u1 - u0
-    local transform = flip
-        and string.format("center 0 0 scale %.4f -1 rotate 0 translate %.4f 1", scaleU, u0)
-        or  string.format("center 0 0 scale %.4f 1 rotate 0 translate %.4f 0", scaleU, u0)
-    mat = CreateMaterial("lvs_gred_fx_ins_tracer_" .. key, "UnlitGeneric", {
-        ["$basetexture"]          = "particles/ins_tracer",
-        ["$basetexturetransform"] = transform,
-        ["$additive"]             = 1,
-        ["$vertexcolor"]          = 1,
-        ["$vertexalpha"]          = 1,
-        ["$translucent"]          = 1,
-        ["$nocull"]               = 1,
-    })
-    STRIP_MATS[key] = mat
-    return mat
-end
-
-local function pickColor(name)
-    local pair = COLORS[name] or COLORS.white
-    local f = math.random()
-    local a, b = pair[1], pair[2]
-    return { Lerp(f, a[1], b[1]), Lerp(f, a[2], b[2]), Lerp(f, a[3], b[3]) }
-end
-
-local EMITTER = nil
-local function emitter(pos)
-    if EMITTER and EMITTER:IsValid() then return EMITTER end
-    EMITTER = ParticleEmitter(pos, false)
-    return EMITTER
-end
-
-hook.Add("ShutDown", "lvs_gred_fx_tracer_emitter", function()
-    if EMITTER and EMITTER:IsValid() then EMITTER:Finish() end
-    EMITTER = nil
-end)
-
--- LVS's DoBulletFlight: ballistic offset = StartDir * t * V + gravity * t^2,
--- so the instantaneous velocity is StartDir * V + 2 * gravity * t.
-local function bulletVelocity(bullet, age)
-    local v = bullet.Velocity or 0
-    if bullet.EnableBallistics then
-        return (bullet.StartDir or bullet:GetDir()) * v + bullet:GetGravity() * (2 * age)
+game.AddParticles(PCF_FILE)
+for _, c in ipairs(TRACER_COLORS) do
+    for _, k in ipairs(TRACER_CALIBERS) do
+        PrecacheParticleSystem("lvs_gred_tracers_" .. c .. "_" .. k)
+        PrecacheParticleSystem("lvs_gred_tracers_" .. c .. "_" .. k .. "_flat")
     end
-    return bullet:GetDir() * v
+end
+
+local function systemName(map, ballistic)
+    local color = map and map.color or "white"
+    local caliber = map and map.caliber or "20mm"
+    if not table.HasValue(TRACER_COLORS, color) then color = "white" end
+    if not table.HasValue(TRACER_CALIBERS, caliber) then caliber = "40mm" end
+    return "lvs_gred_tracers_" .. color .. "_" .. caliber .. (ballistic and "" or "_flat")
+end
+
+local warnedGravity = false
+local function checkGravity()
+    if warnedGravity then return end
+    local g = physenv.GetGravity()
+    if isvector(g) and math.abs(g.z + 600) > 1 then
+        warnedGravity = true
+        print(string.format("[lvs_gred_fx] sv_gravity gives %.0f; tracer drop is generated for -600 and will drift from LVS rounds.", g.z))
+    end
+end
+
+local function stopSystem(self)
+    local psys = self._psys
+    self._psys = nil
+    if LVS_GRED_FX.PsysValid(psys) then
+        pcall(psys.StopEmission, psys, false, true)
+    end
 end
 
 --[[---------------------------------------------------------------------------
@@ -289,63 +245,46 @@ function LVS_GRED_FX_TRACER.Init(name, self, data)
         LVS_GRED_FX_TRACER.NoteShot(ent, name, srcPos, map)
     end
 
-    -- Sequence Random 2..3 and Color Random happen once per gred particle,
-    -- i.e. once per shot.
-    self._strip = math.random(#SHEET_STRIPS)
-    self._color = pickColor(map and map.color or "white")
+    -- Without the LVS bullet there is no velocity to give the particle;
+    -- the original LVS tracer handles that case.
+    if not bullet or not isvector(bullet.Src) then return false end
+
+    local dir = bullet.StartDir or bullet:GetDir()
+    local speed = bullet.Velocity or 0
+    if not isvector(dir) or speed <= 0 then return false end
+
+    local ballistic = bullet.EnableBallistics == true
+    if ballistic then checkGravity() end
+
+    local psysName = systemName(map, ballistic)
+    -- gred_particle_tracer creates its system on the world entity at the
+    -- muzzle; same here.
+    local psys = CreateParticleSystem(Entity(0), psysName, PATTACH_WORLDORIGIN, 0, bullet.Src)
+    if not LVS_GRED_FX.PsysValid(psys) then
+        Debug("tracer system missing:", psysName)
+        return false
+    end
+
+    -- CP0 = launch point; its forward vector, unnormalised, is the launch
+    -- velocity ("Velocity Random" 1 x forward in the generated definition).
+    local ang = dir:Angle()
+    psys:SetControlPoint(0, bullet.Src)
+    psys:SetControlPointOrientation(0, dir * speed, ang:Right(), ang:Up())
+    self._psys = psys
 
     return true
-end
-
--- One velocity-aligned streak per frame at the round's position: the gred
--- sprite-trail particle, re-emitted where LVS says the round is.
-local function emitTracer(self, bullet)
-    local age = CurTime() - bullet:GetSpawnTime()
-    local v = bulletVelocity(bullet, age)
-    local speed = v:Length()
-    if speed < MIN_SPEED then return end
-
-    local pos = bullet:GetPos()
-    local len = math.min(speed * TRAIL_SECONDS, TRAIL_MAX) * math.min(age / LENGTH_FADE_IN, 1)
-    -- LVS blends the round out of the muzzle; never draw back past it.
-    if isvector(bullet.Src) then len = math.min(len, pos:Distance(bullet.Src)) end
-    if len <= 1 then return end
-
-    local em = emitter(pos)
-    if not em then return end
-
-    local particle = em:Add(stripMaterial(self._strip, CvarFlip:GetBool()), pos)
-    if not particle then return end
-
-    local c = self._color
-    particle:SetVelocity(v)
-    particle:SetDieTime(math.max(RealFrameTime() * 2, 0.01))
-    particle:SetAirResistance(0)
-    particle:SetGravity(vector_origin)
-    particle:SetCollide(false)
-    particle:SetStartAlpha(255)
-    particle:SetEndAlpha(255)
-    particle:SetStartSize(TRACER_RADIUS)
-    particle:SetEndSize(TRACER_RADIUS)
-    particle:SetStartLength(len)
-    particle:SetEndLength(len)
-    particle:SetColor(c[1], c[2], c[3])
 end
 
 function LVS_GRED_FX_TRACER.Think(self)
     -- Alive exactly as long as the LVS bullet: LVS decides when the round is
     -- gone (hit, water, 5 s), and with it the tracer.
-    local bullet = getBullet(self._bulletID)
-    if not bullet then
+    if not getBullet(self._bulletID) then
         LVS_GRED_FX_TRACER.Stop(self)
         return false
-    end
-    if CurTime() - bullet:GetSpawnTime() > 0 then
-        emitTracer(self, bullet)
     end
     return true
 end
 
 function LVS_GRED_FX_TRACER.Stop(self)
-    -- Emitted sprites expire on their own within two frames.
+    stopSystem(self)
 end

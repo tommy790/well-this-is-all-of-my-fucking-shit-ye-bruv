@@ -163,6 +163,6 @@ function LVS_GRED_FX.Stop(name, self)
 end
 
 function LVS_GRED_FX.Render(name, self)
-    -- Render is unused: all replacement visuals are particles (tracers are
-    -- emitted from Think the way Gredwitch's shells do it).
+    -- Render is unused: all replacement visuals are particle systems, which
+    -- the engine renders itself.
 end
