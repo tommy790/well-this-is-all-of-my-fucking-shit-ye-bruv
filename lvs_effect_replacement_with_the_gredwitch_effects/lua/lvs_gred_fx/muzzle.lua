@@ -358,7 +358,17 @@ local function resolveImpl(ent, muzzlePos, effectDataAtt)
         if att then
             local distSqr = att.Pos:DistToSqr(muzzlePos)
             if distSqr <= MAX_NAMED_DIST * MAX_NAMED_DIST then
+                -- Another attachment beats LVS's named one when it is clearly
+                -- closer AND is either right at the shot origin (BMD-4M: the
+                -- cannon tip is a misnamed "sight") or itself a muzzle/barrel
+                -- attachment (Pz.IV Zerstörer: four muzzle_N points, LVS names
+                -- only muzzle_1). A non-barrel attachment merely nearer than
+                -- the named muzzle (sight beside the autocannon) never wins.
                 local otherId, otherD = nearestOther(ent, cache, muzzlePos, lvsId, AT_BARREL_DIST * AT_BARREL_DIST)
+                if otherId == 0 and #cache.named > 1 then
+                    otherId, otherD = nearestOf(ent, cache.named, muzzlePos, distSqr)
+                    if otherId == lvsId then otherId = 0 end
+                end
                 if otherId > 0 and math.sqrt(distSqr) - math.sqrt(otherD) >= CLEARLY_CLOSER then
                     return result(cache, otherId, "lvs_muzzle_name_other_barrel", otherD)
                 end
@@ -415,21 +425,42 @@ end
     the world position.
 -----------------------------------------------------------------------------]]
 -- A gun that was resolved once on a vehicle keeps that attachment for every
--- later shot (gunKey = effect + caliber + flash pcf, supplied by the caller),
--- so recoil, turret pose or vehicle speed can never re-pick a different id
--- mid-burst. The remembered id is dropped if it stops being anywhere near
--- the shot (a different gun sharing the same key, or a model swap).
-local CACHED_MAX_DIST = 24
+-- later shot, so recoil or vehicle speed can never re-pick a different id
+-- mid-burst. A "gun" is the caller's gunKey (effect + caliber + flash pcf)
+-- plus where on the vehicle the shot came from: multi-barrel mounts fire the
+-- same key from several places, so each barrel gets its own memory. A turned
+-- turret moves the local origin and simply resolves fresh for that pose.
+local CACHED_LOCAL_RADIUS = 10   -- recoil travel is a few units; barrels sit further apart
+local CACHED_MAX_DIST     = 24
 
 local function cachedForGun(ent, muzzlePos, gunKey)
     local cache = GetCache(ent)
-    local id = cache.guns[gunKey]
-    if not id then return nil end
-    local att = LVS_GRED_FX.GetAttachmentData(ent, id)
-    if not att then cache.guns[gunKey] = nil return nil end
-    local d = att.Pos:Distance(muzzlePos)
-    if d > CACHED_MAX_DIST then cache.guns[gunKey] = nil return nil end
-    return id, { method = "remembered", dist = d, name = attachmentName(cache, id) }
+    local entries = cache.guns[gunKey]
+    if not entries then return nil end
+
+    local localPos = ent:WorldToLocal(muzzlePos)
+    local best, bestD = nil, CACHED_LOCAL_RADIUS * CACHED_LOCAL_RADIUS
+    for i = 1, #entries do
+        local d = entries[i].localPos:DistToSqr(localPos)
+        if d < bestD then best, bestD = entries[i], d end
+    end
+    if not best then return nil end
+
+    local att = LVS_GRED_FX.GetAttachmentData(ent, best.id)
+    local d = att and att.Pos:Distance(muzzlePos) or math.huge
+    if d > CACHED_MAX_DIST then
+        table.RemoveByValue(entries, best)
+        return nil
+    end
+    return best.id, { method = "remembered", dist = d, name = attachmentName(cache, best.id) }
+end
+
+local function rememberGun(ent, muzzlePos, gunKey, id)
+    local cache = GetCache(ent)
+    cache.guns[gunKey] = cache.guns[gunKey] or {}
+    local entries = cache.guns[gunKey]
+    entries[#entries + 1] = { localPos = ent:WorldToLocal(muzzlePos), id = id }
+    if #entries > 32 then table.remove(entries, 1) end
 end
 
 function LVS_GRED_FX.ResolveMuzzleAttachment(ent, muzzlePos, effectDataAtt, gunKey)
@@ -448,7 +479,7 @@ function LVS_GRED_FX.ResolveMuzzleAttachment(ent, muzzlePos, effectDataAtt, gunK
     end
 
     if isstring(gunKey) and id and id > 0 then
-        GetCache(ent).guns[gunKey] = id
+        rememberGun(ent, muzzlePos, gunKey, id)
     end
     return id, info
 end
