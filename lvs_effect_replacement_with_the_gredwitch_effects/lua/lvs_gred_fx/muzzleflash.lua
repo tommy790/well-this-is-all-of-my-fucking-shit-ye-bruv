@@ -189,28 +189,12 @@ function LVS_GRED_FX_MUZZLEFLASH.Spawn(effectName, self, data)
 
     local ok
 
-    -- Multi-barrel mounts (Flakpanzer 341 quad, recoiling autocannons) often
-    -- have one shared attachment sitting between the barrels. Attaching a
-    -- short flash there puts it visibly off the barrel that fired, so when
-    -- the resolved attachment is further from the shot than a barrel radius
-    -- the flash is spawned at the real shot origin instead. Only the flash:
-    -- barrel smoke lives long enough that it must keep following the gun.
-    local flashAtt = att
-    local maxOffset = cfg.FlashMaxAttachOffset or 6
-    if flashAtt and flashAtt > 0 and info and info.dist and info.dist > maxOffset then
-        if cfg.DebugEnabled() then
-            Debug("muzzle flash: attachment", flashAtt,
-                string.format("is %.1fu from the shot (> %du), spawning at shot origin", info.dist, maxOffset))
-        end
-        flashAtt = 0
-    end
-
     -- Spawn on rootEnt (the entity that owns the resolved attachment) so the
     -- PATTACH_POINT_FOLLOW id matches the entity.
     if isArtillery then
-        ok = spawnArtillery(rootEnt, muzzlePos, ang, flashAtt, cfg.ArtilleryLife)
+        ok = spawnArtillery(rootEnt, muzzlePos, ang, att, cfg.ArtilleryLife)
     else
-        ok = spawnFlash(pcf, rootEnt, muzzlePos, ang, flashAtt, cfg.FlashLife)
+        ok = spawnFlash(pcf, rootEnt, muzzlePos, ang, att, cfg.FlashLife)
     end
 
     -- Barrel smoke: separate system, resolved with its own attachment lookup,
