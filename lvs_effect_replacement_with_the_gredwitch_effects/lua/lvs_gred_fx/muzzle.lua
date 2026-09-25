@@ -1,53 +1,51 @@
 --[[---------------------------------------------------------------------------
     LVS → Gredwitch FX : muzzle attachment resolution (client-side)
 
-    Resolves the correct weapon muzzle attachment for a given firing entity and
-    muzzle world position, following this priority order:
+    Given the firing entity and the shot origin from the EffectData, returns
+    the attachment id the flash/smoke should be parented to.
 
-      1. LVS-provided attachment id in the EffectData  (validated: must exist
-         and sit close to the muzzle world position)
-      2. Authoritative LVS muzzle attachment name
-         (ent.TurretBallisticsMuzzleAttachment, e.g. "muzzle") via
-         ent:LookupAttachment(name), validated against the muzzle position
-      3. Attachments whose name contains "muzzle"/"barrel", picking the one
-         nearest to the muzzle position (this deterministically selects the
-         correct barrel on multi-barrel / alternating-barrel weapons, since
-         each shot's muzzle position identifies the barrel that fired)
-      4. Generic nearest attachment inside a strict radius (models that have
-         no named muzzle attachments, e.g. some mounted MG pods)
-      5. World-position fallback (only when nothing valid was found — the
-         caller logs why)
+    Where positions are measured
+      Attachment positions are NOT read from the rendered vehicle. Each
+      vehicle gets a hidden reference copy of its model whose hull never
+      moves; only the turret and gun pose is copied onto it, once per shot,
+      and then frozen. The shot origin is carried over to that reference
+      relative to the live attachment it is nearest to, so hull speed and
+      turret motion between fire and resolve cancel out. All distance tests
+      below run against that frozen reference.
 
-    The muzzle world position is only ever used to FIND the attachment; the
-    actual particle is always spawned with PATTACH_POINT_FOLLOW once an
-    attachment has been resolved.
+    How the id is chosen (first match wins)
+      1. The attachment id LVS put in the EffectData, if it is close to the
+         shot origin and no other attachment is clearly closer. (LVS often
+         sends a stale base-model id here -- id 1 on the 2S1 is a suspension
+         attachment.)
+      2. LVS's own muzzle attachment (ent.TurretBallisticsMuzzleAttachment),
+         if close. If another attachment is clearly closer, that one fired
+         instead -- multi-gun turrets only name one muzzle (BMD-4M: "muzzle"
+         is the autocannon, the cannon fires from a different attachment).
+      3. Nearest attachment whose name contains "muzzle" or "barrel".
+      4. Nearest attachment of any name inside a strict radius.
+      5. Nothing -> id 0; the caller spawns at the world position.
 
-    Performance:
-      * attachment enumeration (GetAttachments) is cached per entity and
-        invalidated only when the model changes,
-      * static barrels (fixed local muzzle positions) are cached per local
-        position so the nearest-attachment scan runs at most once per barrel,
-      * LookupAttachment for the LVS muzzle name is cheap and cached per
-        entity+model as well.
+    Names come from GetAttachments(); GetAttachment(id) only returns Pos/Ang.
+
+    The shot origin is only used to FIND the attachment. The particle is
+    always parented to the real vehicle with PATTACH_POINT_FOLLOW.
 -----------------------------------------------------------------------------]]
 
 if not CLIENT then return end
 
 local cfg = LVS_GRED_FX.Config
-local Debug = LVS_GRED_FX.Debug
 
--- Tolerances (units).
-local MAX_EFFECTDATA_DIST = 96   -- EffectData attachment must be near the muzzle
-local MAX_NAMED_DIST      = 32   -- "muzzle"/"barrel" named candidates: a real
-                                 -- muzzle is within a few units of bullet.Src;
-                                 -- 128 allowed far/wrong attachments (e.g. a
-                                 -- BMD-4 "muzzle" id 18 units away -> smoke on
-                                 -- the wrong spot). 32 still tolerates turret
-                                 -- pivot offset while rejecting non-muzzles.
-local MAX_GENERIC_DIST    = 48   -- strict radius for unnamed models
-
--- Local-space quantization for the static-barrel cache.
-local LOCAL_CELL = 8
+-- Tolerances (units). LVS fires from the attachment position itself, so a
+-- genuine muzzle is within a few units of the shot origin.
+local MAX_EFFECTDATA_DIST = 24
+local MAX_NAMED_DIST      = 32   -- allows a little turret-pivot offset
+local MAX_GENERIC_DIST    = 24
+local CLEARLY_CLOSER      = 4    -- another attachment must beat the candidate by this much
+-- An attachment this close to the shot origin IS the barrel tip. Only such an
+-- attachment may override LVS's named muzzle (BMD-4M: the cannon tip is a
+-- misnamed "sight"; the autocannon shot is 8u from it and must not use it).
+local AT_BARREL_DIST      = 3
 
 local function isMuzzleName(name)
     if not isstring(name) then return false end
@@ -57,8 +55,8 @@ local function isMuzzleName(name)
 end
 
 --[[---------------------------------------------------------------------------
-    Per-entity attachment cache. Invalidated when the model changes so that
-    toolgun model swaps can never leave stale ids behind.
+    Per-entity attachment list. Invalidated when the model changes so a
+    toolgun model swap can never leave stale ids behind.
 -----------------------------------------------------------------------------]]
 local function GetCache(ent)
     local model = ent:GetModel()
@@ -72,74 +70,34 @@ local function GetCache(ent)
         if ok and istable(res) then atts = res end
     end
 
-    local named = {}
+    local named, nameById = {}, {}
     if atts then
         for i = 1, #atts do
             local id = atts[i] and atts[i].id
             local name = atts[i] and atts[i].name
-            if id and id > 0 and isMuzzleName(name) then
-                named[#named + 1] = id
+            if id and id > 0 then
+                nameById[id] = name or ""
+                if isMuzzleName(name) then named[#named + 1] = id end
             end
         end
     end
 
     cache = {
-        model  = model,
-        atts   = atts,
-        named  = named,
-        byLocal = {},  -- quantized local pos → attachment id (static barrels)
-        lvsNameId = nil, -- cached id for ent.TurretBallisticsMuzzleAttachment
-        lvsName  = nil,
+        model     = model,
+        atts      = atts,
+        named     = named,
+        nameById  = nameById,
+        lvsNameId = nil,
+        lvsName   = nil,
+        guns      = {},   -- gunKey -> attachment id remembered from that gun's first shot
     }
 
     ent._lvsGredMuzzleCache = cache
     return cache
 end
 
-local function localKey(v)
-    if not isvector(v) then return nil end
-    return math.floor(v.x / LOCAL_CELL + 0.5)
-        .. ","
-        .. math.floor(v.y / LOCAL_CELL + 0.5)
-        .. ","
-        .. math.floor(v.z / LOCAL_CELL + 0.5)
-end
-
--- Get world position (and name) of an attachment; returns nil on any failure.
-function LVS_GRED_FX.GetAttachmentData(ent, attID)
-    if not IsValid(ent) or not ent.GetAttachment then return nil end
-    if not attID or attID <= 0 then return nil end
-
-    if ent.SetupBones then
-        pcall(ent.SetupBones, ent)
-    end
-
-    local ok, att = pcall(ent.GetAttachment, ent, attID)
-    if not ok or not att or not att.Pos or not isvector(att.Pos) then
-        return nil
-    end
-
-    return att
-end
-
-function LVS_GRED_FX.ValidAttachment(ent, attID)
-    return LVS_GRED_FX.GetAttachmentData(ent, attID) ~= nil
-end
-
-function LVS_GRED_FX.AttachmentName(ent, attID)
-    local att = LVS_GRED_FX.GetAttachmentData(ent, attID)
-    if not att then return "?" end
-    return att.Name or "?"
-end
-
--- Resolve the vehicle root for an entity (gunner pods → their base vehicle).
-function LVS_GRED_FX.VehicleRoot(ent)
-    if not IsValid(ent) then return nil end
-    if ent.GetVehicle then
-        local base = ent:GetVehicle()
-        if IsValid(base) then return base end
-    end
-    return ent
+local function attachmentName(cache, attID)
+    return cache and cache.nameById and cache.nameById[attID] or ""
 end
 
 local function lookupLvsMuzzleId(ent, cache)
@@ -167,158 +125,435 @@ local function lookupLvsMuzzleId(ent, cache)
 end
 
 --[[---------------------------------------------------------------------------
-    ResolveMuzzleAttachment( ent, muzzlePos, effectDataAtt )
-
-    Returns: attachmentID, info
-      info = {
-        method = "effectdata" | "lvs_muzzle_name" | "named_nearest" |
-                "local_cache" | "nearest" | "none",
-        dist   = resolution distance (or nil),
-        name   = resolved attachment name (or nil),
-      }
-
-    attachmentID == 0 means "no usable attachment" — the caller must use the
-    world-position fallback.
+    Frozen reference model, one per vehicle.
 -----------------------------------------------------------------------------]]
-function LVS_GRED_FX.ResolveMuzzleAttachment(ent, muzzlePos, effectDataAtt)
-    if not IsValid(ent) then return 0, { method = "none", reason = "invalid entity" } end
-    if not isvector(muzzlePos) then return 0, { method = "none", reason = "invalid muzzle position" } end
+local REF_ORIGIN  = Vector(0, 0, -30000)
+local SHOT_WINDOW = 0.05   -- fire events closer together share one captured pose
+local REFS = setmetatable({}, { __mode = "k" })   -- vehicle -> { ent, model, shot }
 
-    -- Debug: draw a blue box showing the named-nearest attachment search
-    -- area (MAX_NAMED_DIST radius around the muzzle position), so it is easy
-    -- to see where the resolver is looking for the barrel attachment.
+-- Set while a resolve runs so GetAttachmentData reads the reference.
+local ACTIVE_REF, ACTIVE_VEH = nil, nil
+
+local function dropRef(veh)
+    local r = REFS[veh]
+    if r and IsValid(r.ent) then r.ent:Remove() end
+    REFS[veh] = nil
+end
+
+hook.Add("OnReloaded", "lvs_gred_fx_muzzle_refs", function()
+    for veh in pairs(REFS) do dropRef(veh) end
+end)
+hook.Add("EntityRemoved", "lvs_gred_fx_muzzle_refs", function(ent)
+    if REFS[ent] then dropRef(ent) end
+end)
+timer.Create("lvs_gred_fx_muzzle_refs_sweep", 10, 0, function()
+    for veh in pairs(REFS) do
+        if not IsValid(veh) then dropRef(veh) end
+    end
+end)
+
+-- Copies only the turret/gun pose; the hull stays parked. Turret values are
+-- taken from LVS's own accessors and written the way sh_turret.lua writes
+-- them (reading the normalised pose parameter back wraps at +-180).
+local function captureTurretPose(ref, veh)
+    ref:SetPos(REF_ORIGIN)
+    ref:SetAngles(angle_zero)
+
+    local yawName, pitchName = veh.TurretYawPoseParameterName, veh.TurretPitchPoseParameterName
+    if isstring(yawName) and yawName ~= "" and veh.GetTurretYaw then
+        ref:SetPoseParameter(yawName, (veh.TurretYawOffset or 0) + (veh:GetTurretYaw() or 0) * (veh.TurretYawMul or 1))
+    end
+    if isstring(pitchName) and pitchName ~= "" and veh.GetTurretPitch then
+        ref:SetPoseParameter(pitchName, (veh.TurretPitchOffset or 0) + (veh:GetTurretPitch() or 0) * (veh.TurretPitchMul or 1))
+    end
+
+    -- LVS bone pose parameters (gun elevation / recoil) are bone manipulations.
+    local bones = veh:GetBoneCount() or 0
+    if bones == ref:GetBoneCount() then
+        for b = 0, bones - 1 do
+            local a = veh:GetManipulateBoneAngles(b) or angle_zero
+            if ref:GetManipulateBoneAngles(b) ~= a then ref:ManipulateBoneAngles(b, a) end
+            local pos = veh:GetManipulateBonePosition(b) or vector_origin
+            if ref:GetManipulateBonePosition(b) ~= pos then ref:ManipulateBonePosition(b, pos) end
+        end
+    end
+
+    for i = 0, (veh:GetNumBodyGroups() or 1) - 1 do
+        local bg = veh:GetBodygroup(i)
+        if ref:GetBodygroup(i) ~= bg then ref:SetBodygroup(i, bg) end
+    end
+
+    ref:InvalidateBoneCache()
+    ref:SetupBones()
+end
+
+local function referenceFor(veh, shotId)
+    local model = veh:GetModel()
+    local r = REFS[veh]
+    if r and (not IsValid(r.ent) or r.model ~= model) then
+        dropRef(veh)
+        r = nil
+    end
+    if not r then
+        local ent = ClientsideModel(model, RENDERGROUP_OTHER)
+        if not IsValid(ent) then return nil end
+        ent:SetNoDraw(true)
+        ent:DrawShadow(false)
+        ent:SetPos(REF_ORIGIN)
+        ent:SetAngles(angle_zero)
+        r = { ent = ent, model = model, shot = nil }
+        REFS[veh] = r
+    end
+    if r.shot ~= shotId then
+        captureTurretPose(r.ent, veh)
+        r.shot = shotId
+    end
+    return r.ent
+end
+
+-- Shot origin -> the same point on the frozen reference, expressed relative
+-- to the live attachment it is nearest to (hull and turret motion cancel
+-- out because that attachment moved with them).
+local function toReferenceSpace(veh, ref, worldPos, worldPos2)
+    if veh.SetupBones then pcall(veh.SetupBones, veh) end
+    local ok, atts = pcall(veh.GetAttachments, veh)
+    local bestId, bestD, bestAtt = nil, math.huge, nil
+    if ok and istable(atts) then
+        for i = 1, #atts do
+            local id = atts[i].id
+            if id and id > 0 then
+                local ok2, att = pcall(veh.GetAttachment, veh, id)
+                if ok2 and att and isvector(att.Pos) and isangle(att.Ang) then
+                    local d = att.Pos:DistToSqr(worldPos)
+                    if d < bestD then bestD, bestId, bestAtt = d, id, att end
+                end
+            end
+        end
+    end
+    if bestId and bestD <= 128 * 128 then
+        local ok3, refAtt = pcall(ref.GetAttachment, ref, bestId)
+        if ok3 and refAtt and isvector(refAtt.Pos) and isangle(refAtt.Ang) then
+            local function map(p)
+                local off = WorldToLocal(p, angle_zero, bestAtt.Pos, bestAtt.Ang)
+                return LocalToWorld(off, angle_zero, refAtt.Pos, refAtt.Ang)
+            end
+            return map(worldPos), worldPos2 and map(worldPos2) or nil
+        end
+    end
+    -- Nothing near: fall back to the vehicle's network (server) transform.
+    local org = veh.GetNetworkOrigin and veh:GetNetworkOrigin() or nil
+    local ang = veh.GetNetworkAngles and veh:GetNetworkAngles() or nil
+    if not isvector(org) or org == vector_origin then org = veh:GetPos() end
+    if not isangle(ang) then ang = veh:GetAngles() end
+    local function map(p) return REF_ORIGIN + WorldToLocal(p, angle_zero, org, ang) end
+    return map(worldPos), worldPos2 and map(worldPos2) or nil
+end
+
+--[[---------------------------------------------------------------------------
+    Public helpers.
+-----------------------------------------------------------------------------]]
+
+-- Position/angle of an attachment (Pos/Ang only); nil on any failure. While
+-- a resolve is running for `ent`, reads come from its frozen reference.
+function LVS_GRED_FX.GetAttachmentData(ent, attID)
+    if not IsValid(ent) or not ent.GetAttachment then return nil end
+    if not attID or attID <= 0 then return nil end
+
+    local src = ent
+    if ent == ACTIVE_VEH and IsValid(ACTIVE_REF) then
+        src = ACTIVE_REF
+    elseif ent.SetupBones then
+        pcall(ent.SetupBones, ent)
+    end
+
+    local ok, att = pcall(src.GetAttachment, src, attID)
+    if not ok or not att or not att.Pos or not isvector(att.Pos) then
+        return nil
+    end
+
+    return att
+end
+
+function LVS_GRED_FX.ValidAttachment(ent, attID)
+    return LVS_GRED_FX.GetAttachmentData(ent, attID) ~= nil
+end
+
+function LVS_GRED_FX.AttachmentName(ent, attID)
+    if not IsValid(ent) or not attID or attID <= 0 then return "?" end
+    local name = attachmentName(GetCache(ent), attID)
+    return name ~= "" and name or "?"
+end
+
+-- Vehicle root for an entity (gunner pods -> their base vehicle).
+function LVS_GRED_FX.VehicleRoot(ent)
+    if not IsValid(ent) then return nil end
+    if ent.GetVehicle then
+        local base = ent:GetVehicle()
+        if IsValid(base) then return base end
+    end
+    return ent
+end
+
+--[[---------------------------------------------------------------------------
+    Resolver.
+-----------------------------------------------------------------------------]]
+
+-- Nearest attachment to `pos` other than `exceptId`. Returns id, distSqr.
+local function nearestOther(ent, cache, pos, exceptId, limitSqr)
+    local bestId, bestD = 0, limitSqr
+    if not cache.atts then return bestId, bestD end
+    for i = 1, #cache.atts do
+        local id = cache.atts[i] and cache.atts[i].id
+        if id and id > 0 and id ~= exceptId then
+            local att = LVS_GRED_FX.GetAttachmentData(ent, id)
+            if att then
+                local d = att.Pos:DistToSqr(pos)
+                if d < bestD then bestD, bestId = d, id end
+            end
+        end
+    end
+    return bestId, bestD
+end
+
+-- Nearest attachment from a list of ids. Returns id, distSqr.
+local function nearestOf(ent, ids, pos, limitSqr)
+    local bestId, bestD = 0, limitSqr
+    for i = 1, #ids do
+        local id = ids[i]
+        local att = LVS_GRED_FX.GetAttachmentData(ent, id)
+        if att then
+            local d = att.Pos:DistToSqr(pos)
+            if d < bestD then bestD, bestId = d, id end
+        end
+    end
+    return bestId, bestD
+end
+
+local function result(cache, id, method, distSqr)
+    return id, { method = method, dist = math.sqrt(distSqr), name = attachmentName(cache, id) }
+end
+
+-- Barrel-axis match. Recoil and LVS's origin offsets move the shot origin
+-- ALONG the barrel, never sideways, so the attachment of the barrel that
+-- fired is the one lying on the line through the origin in the bullet
+-- direction. A neighbouring barrel, a sight or a suspension point is metres
+-- off that line however close it is in plain distance. Muzzle/barrel-named
+-- attachments are preferred among on-axis candidates.
+-- The along-barrel window is deliberately short. Recoil and LVS origin
+-- offsets seen so far are 6-14u; a coaxial MG runs parallel to the cannon a
+-- few units beside it, so with a long window the cannon's muzzle 47u ahead
+-- sits inside the MG's line of fire (BT-7). Anything further along is left
+-- to the fallback chain, which never reached that far either.
+local AXIS_PERP_MAX   = 4     -- max sideways offset from the barrel line
+local AXIS_ALONG_MIN  = -12   -- attachment slightly behind the origin
+local AXIS_ALONG_MAX  = 24    -- attachment ahead of a recoiled origin
+
+local function resolveByAxis(ent, cache, muzzlePos, dir)
+    if not cache.atts then return 0 end
+    local bestId, bestScore, bestPerp = 0, math.huge, 0
+    for i = 1, #cache.atts do
+        local id = cache.atts[i] and cache.atts[i].id
+        if id and id > 0 then
+            local att = LVS_GRED_FX.GetAttachmentData(ent, id)
+            if att then
+                local v = att.Pos - muzzlePos
+                local along = v:Dot(dir)
+                if along >= AXIS_ALONG_MIN and along <= AXIS_ALONG_MAX then
+                    local perp = (v - dir * along):Length()
+                    if perp <= AXIS_PERP_MAX then
+                        local score = perp + math.abs(along) * 0.05
+                        if isMuzzleName(cache.nameById[id]) then score = score - AXIS_PERP_MAX end
+                        if score < bestScore then bestId, bestScore, bestPerp = id, score, perp end
+                    end
+                end
+            end
+        end
+    end
+    return bestId, bestPerp
+end
+
+local function resolveImpl(ent, muzzlePos, effectDataAtt, dir)
     if cfg.DebugEnabled() and debugoverlay and debugoverlay.Box then
-        debugoverlay.Box(muzzlePos, Vector(MAX_NAMED_DIST, MAX_NAMED_DIST, MAX_NAMED_DIST), 0.5, Color(0, 100, 255, 60))
+        local boxPos = (ent == ACTIVE_VEH) and ent:LocalToWorld(muzzlePos - REF_ORIGIN) or muzzlePos
+        debugoverlay.Box(boxPos, Vector(MAX_NAMED_DIST, MAX_NAMED_DIST, MAX_NAMED_DIST), 0.5, Color(0, 100, 255, 60))
     end
 
     local cache = GetCache(ent)
 
-    -- 1) EffectData attachment id. LVS sometimes provides a muzzle attachment
-    --    id, but it can be a stale/base-model id (e.g. lvs_2s38 sends id 1 —
-    --    39 units away, empty name — which is a hull/root attachment, not the
-    --    barrel). Validate it like the other paths: real name AND close to
-    --    the muzzle position.
+    -- 0) Barrel axis (needs the bullet direction).
+    if dir then
+        local id, perp = resolveByAxis(ent, cache, muzzlePos, dir)
+        if id > 0 then
+            local att = LVS_GRED_FX.GetAttachmentData(ent, id)
+            local _, info = result(cache, id, "barrel_axis", att and att.Pos:DistToSqr(muzzlePos) or 0)
+            info.perp = perp
+            return id, info
+        end
+    end
+
+    -- 1) EffectData attachment id.
     if effectDataAtt and effectDataAtt > 0 then
         local att = LVS_GRED_FX.GetAttachmentData(ent, effectDataAtt)
-        if att and att.Name and att.Name ~= "" then
-            local dist = att.Pos:DistToSqr(muzzlePos)
-            if dist <= MAX_EFFECTDATA_DIST * MAX_EFFECTDATA_DIST then
-                return effectDataAtt, {
-                    method = "effectdata",
-                    dist = math.sqrt(dist),
-                    name = att.Name,
-                }
+        if att then
+            local distSqr = att.Pos:DistToSqr(muzzlePos)
+            if distSqr <= MAX_EFFECTDATA_DIST * MAX_EFFECTDATA_DIST then
+                local _, otherD = nearestOther(ent, cache, muzzlePos, effectDataAtt, distSqr)
+                if math.sqrt(distSqr) - math.sqrt(otherD) < CLEARLY_CLOSER then
+                    return result(cache, effectDataAtt, "effectdata", distSqr)
+                end
             end
         end
     end
 
-    -- 2) Authoritative LVS muzzle attachment name on the entity.
+    -- 2) LVS's own muzzle attachment, unless another barrel is clearly closer.
     local lvsId = lookupLvsMuzzleId(ent, cache)
     if lvsId > 0 then
         local att = LVS_GRED_FX.GetAttachmentData(ent, lvsId)
-        -- Require a real name AND proximity: an unnamed or far attachment is
-        -- not the actual barrel muzzle (e.g. BMD-4 "muzzle" id 18u away).
-        if att and att.Name and att.Name ~= "" then
-            local dist = att.Pos:DistToSqr(muzzlePos)
-            if dist <= MAX_NAMED_DIST * MAX_NAMED_DIST then
-                return lvsId, {
-                    method = "lvs_muzzle_name",
-                    dist = math.sqrt(dist),
-                    name = att.Name,
-                }
+        if att then
+            local distSqr = att.Pos:DistToSqr(muzzlePos)
+            if distSqr <= MAX_NAMED_DIST * MAX_NAMED_DIST then
+                -- Another attachment beats LVS's named one when it is clearly
+                -- closer AND is either right at the shot origin (BMD-4M: the
+                -- cannon tip is a misnamed "sight") or itself a muzzle/barrel
+                -- attachment (Pz.IV Zerstörer: four muzzle_N points, LVS names
+                -- only muzzle_1). A non-barrel attachment merely nearer than
+                -- the named muzzle (sight beside the autocannon) never wins.
+                -- LVS pointing at a non-barrel attachment (Flakpanzer 341
+                -- names "aim", which sits behind the barrels): a real barrel
+                -- point within range wins even when the recoiled shot origin
+                -- happens to be momentarily nearer the "aim" point.
+                if not isMuzzleName(attachmentName(cache, lvsId)) and #cache.named > 0 then
+                    local namedId, namedD = nearestOf(ent, cache.named, muzzlePos, MAX_NAMED_DIST * MAX_NAMED_DIST)
+                    if namedId > 0 and namedId ~= lvsId then
+                        return result(cache, namedId, "lvs_muzzle_name_other_barrel", namedD)
+                    end
+                end
+                local otherId, otherD = nearestOther(ent, cache, muzzlePos, lvsId, AT_BARREL_DIST * AT_BARREL_DIST)
+                if otherId == 0 and #cache.named > 0 then
+                    otherId, otherD = nearestOf(ent, cache.named, muzzlePos, distSqr)
+                    if otherId == lvsId then otherId = 0 end
+                end
+                if otherId > 0 and math.sqrt(distSqr) - math.sqrt(otherD) >= CLEARLY_CLOSER then
+                    return result(cache, otherId, "lvs_muzzle_name_other_barrel", otherD)
+                end
+                return result(cache, lvsId, "lvs_muzzle_name", distSqr)
             end
         end
     end
 
-    -- 3) Named muzzle candidates nearest to the muzzle position. This handles
-    --    multi-barrel vehicles (muzzle, hull_muzzle, muzzle_coax, muzzle1/2...)
-    --    deterministically: each shot's muzzle position picks its own barrel.
-    --    Only attachments with a real name qualify (an unnamed id is not a
-    --    trustworthy muzzle).
+    -- 3) Nearest attachment named muzzle/barrel.
     if cache.named and #cache.named > 0 then
-        local best, bestDistSqr = 0, MAX_NAMED_DIST * MAX_NAMED_DIST
-        local bestName = nil
-
-        for i = 1, #cache.named do
-            local id = cache.named[i]
-            local att = LVS_GRED_FX.GetAttachmentData(ent, id)
-            if att and att.Name and att.Name ~= "" then
-                local d = att.Pos:DistToSqr(muzzlePos)
-                if d < bestDistSqr then
-                    bestDistSqr = d
-                    best = id
-                    bestName = att.Name
-                end
-            end
-        end
-
-        if best > 0 then
-            return best, {
-                method = "named_nearest",
-                dist = math.sqrt(bestDistSqr),
-                name = bestName,
-            }
-        end
+        local id, d = nearestOf(ent, cache.named, muzzlePos, MAX_NAMED_DIST * MAX_NAMED_DIST)
+        if id > 0 then return result(cache, id, "named_nearest", d) end
     end
 
-    -- 4) Static-barrel cache: fixed local muzzle positions resolve once.
-    --    The cache stores the resolved id AND the exact local position. A
-    --    cache hit is only accepted when the CURRENT muzzle local position is
-    --    within a few units of the cached one — this prevents two barrels
-    --    whose muzzles share an 8-unit cell (e.g. BMD-4M autocannon + main
-    --    cannon) from cross-returning each other's attachment id.
-    if ent.WorldToLocal then
-        local localPos = ent:WorldToLocal(muzzlePos)
-        local key = localKey(localPos)
-        if key then
-            local cached = cache.byLocal[key]
-            if cached and cached.id then
-                if LVS_GRED_FX.ValidAttachment(ent, cached.id) and cached.pos and isvector(cached.pos) then
-                    local drift = localPos:DistToSqr(cached.pos)
-                    if drift <= 4 * 4 then -- within 4 units of the cached barrel
-                        return cached.id, { method = "local_cache", dist = nil, name = LVS_GRED_FX.AttachmentName(ent, cached.id) }
-                    end
-                end
-                cache.byLocal[key] = nil
-            end
-        end
-    end
-
-    -- 5) Generic nearest attachment inside a strict radius (unnamed models).
+    -- 4) Nearest attachment of any name, strict radius.
     if cache.atts and #cache.atts > 0 then
-        local best, bestDistSqr = 0, MAX_GENERIC_DIST * MAX_GENERIC_DIST
-        local bestName = nil
-
-        for i = 1, #cache.atts do
-            local id = cache.atts[i] and cache.atts[i].id
-            if id and id > 0 then
-                local att = LVS_GRED_FX.GetAttachmentData(ent, id)
-                if att then
-                    local d = att.Pos:DistToSqr(muzzlePos)
-                    if d < bestDistSqr then
-                        bestDistSqr = d
-                        best = id
-                        bestName = att.Name or ""
-                    end
-                end
-            end
-        end
-
-        if best > 0 then
-            if ent.WorldToLocal then
-                local localPos = ent:WorldToLocal(muzzlePos)
-                local key = localKey(localPos)
-                if key then
-                    cache.byLocal[key] = { id = best, pos = localPos }
-                end
-            end
-            return best, {
-                method = "nearest",
-                dist = math.sqrt(bestDistSqr),
-                name = bestName,
-            }
-        end
+        local id, d = nearestOther(ent, cache, muzzlePos, 0, MAX_GENERIC_DIST * MAX_GENERIC_DIST)
+        if id > 0 then return result(cache, id, "nearest", d) end
     end
 
     return 0, { method = "none", reason = "no attachment near muzzle position" }
+end
+
+local function resolveOnReference(ent, muzzlePos, effectDataAtt, dir)
+    local now = CurTime()
+    local shotId = ent._lvsGredShotId
+    if not shotId or now - (ent._lvsGredShotTime or 0) > SHOT_WINDOW then
+        shotId = now
+        ent._lvsGredShotId, ent._lvsGredShotTime = shotId, now
+    end
+
+    local ref = referenceFor(ent, shotId)
+    if not IsValid(ref) then return nil end
+
+    ACTIVE_REF, ACTIVE_VEH = ref, ent
+    local refPos, refTip = toReferenceSpace(ent, ref, muzzlePos, dir and (muzzlePos + dir * 16) or nil)
+    local refDir = refTip and (refTip - refPos):GetNormalized() or nil
+    local ok, id, info = pcall(resolveImpl, ent, refPos, effectDataAtt, refDir)
+    ACTIVE_REF, ACTIVE_VEH = nil, nil
+    if not ok then return nil end
+    return id, info
+end
+
+--[[---------------------------------------------------------------------------
+    ResolveMuzzleAttachment( ent, muzzlePos, effectDataAtt )
+
+    Returns: attachmentID, info
+      info = {
+        method = "barrel_axis" | "remembered" | "effectdata" | "lvs_muzzle_name"
+               | "lvs_muzzle_name_other_barrel" | "named_nearest" | "nearest" | "none",
+        dist   = distance from the shot origin (nil for "none"),
+        name   = attachment name ("" when unnamed),
+      }
+
+    attachmentID == 0 means no usable attachment; the caller falls back to
+    the world position.
+-----------------------------------------------------------------------------]]
+-- A gun that was resolved once on a vehicle keeps that attachment for every
+-- later shot, so recoil or vehicle speed can never re-pick a different id
+-- mid-burst. A "gun" is the caller's gunKey (effect + caliber + flash pcf)
+-- plus where on the vehicle the shot came from: multi-barrel mounts fire the
+-- same key from several places, so each barrel gets its own memory. A turned
+-- turret moves the local origin and simply resolves fresh for that pose.
+local CACHED_LOCAL_RADIUS = 10   -- recoil travel is a few units; barrels sit further apart
+-- A remembered id is trusted only while it still sits on the shot. Local-space
+-- keying alone is not enough: a turned turret can put another barrel's old
+-- entry within the radius, and a 13u-spaced twin would inherit the wrong id.
+local CACHED_MAX_DIST     = 6
+local REMEMBER_MAX_DIST   = 4    -- learn only from shots that landed on the attachment
+
+local function cachedForGun(ent, muzzlePos, gunKey)
+    local cache = GetCache(ent)
+    local entries = cache.guns[gunKey]
+    if not entries then return nil end
+
+    local localPos = ent:WorldToLocal(muzzlePos)
+    local best, bestD = nil, CACHED_LOCAL_RADIUS * CACHED_LOCAL_RADIUS
+    for i = 1, #entries do
+        local d = entries[i].localPos:DistToSqr(localPos)
+        if d < bestD then best, bestD = entries[i], d end
+    end
+    if not best then return nil end
+
+    local att = LVS_GRED_FX.GetAttachmentData(ent, best.id)
+    local d = att and att.Pos:Distance(muzzlePos) or math.huge
+    if d > CACHED_MAX_DIST then
+        table.RemoveByValue(entries, best)
+        return nil
+    end
+    return best.id, { method = "remembered", dist = d, name = attachmentName(cache, best.id) }
+end
+
+local function rememberGun(ent, muzzlePos, gunKey, id)
+    local cache = GetCache(ent)
+    cache.guns[gunKey] = cache.guns[gunKey] or {}
+    local entries = cache.guns[gunKey]
+    entries[#entries + 1] = { localPos = ent:WorldToLocal(muzzlePos), id = id }
+    if #entries > 32 then table.remove(entries, 1) end
+end
+
+function LVS_GRED_FX.ResolveMuzzleAttachment(ent, muzzlePos, effectDataAtt, gunKey, dir)
+    if not IsValid(ent) then return 0, { method = "none", reason = "invalid entity" } end
+    if not isvector(muzzlePos) then return 0, { method = "none", reason = "invalid muzzle position" } end
+    if isvector(dir) and dir:LengthSqr() > 0.0001 then dir = dir:GetNormalized() else dir = nil end
+
+    if isstring(gunKey) then
+        local id, info = cachedForGun(ent, muzzlePos, gunKey)
+        if id then return id, info end
+    end
+
+    local id, info = resolveOnReference(ent, muzzlePos, effectDataAtt, dir)
+    if id == nil then
+        -- Reference model could not be created: resolve on the live entity.
+        id, info = resolveImpl(ent, muzzlePos, effectDataAtt, dir)
+    end
+
+    -- Only a confident result is remembered: an attachment that was right at
+    -- the shot origin. A loose pick (shared "aim" point 6-11u off a recoiled
+    -- barrel) would otherwise be locked in for every later shot.
+    if isstring(gunKey) and id and id > 0 and info and info.dist and info.dist <= REMEMBER_MAX_DIST then
+        rememberGun(ent, muzzlePos, gunKey, id)
+    end
+    return id, info
 end
