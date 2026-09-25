@@ -365,11 +365,15 @@ local function resolveImpl(ent, muzzlePos, effectDataAtt)
                 -- only muzzle_1). A non-barrel attachment merely nearer than
                 -- the named muzzle (sight beside the autocannon) never wins.
                 local otherId, otherD = nearestOther(ent, cache, muzzlePos, lvsId, AT_BARREL_DIST * AT_BARREL_DIST)
-                if otherId == 0 and #cache.named > 1 then
+                local margin = CLEARLY_CLOSER
+                if otherId == 0 and #cache.named > 0 then
                     otherId, otherD = nearestOf(ent, cache.named, muzzlePos, distSqr)
                     if otherId == lvsId then otherId = 0 end
+                    -- LVS pointing at a non-barrel attachment (Flakpanzer 341
+                    -- names "aim"): any nearer real barrel point wins outright.
+                    if not isMuzzleName(attachmentName(cache, lvsId)) then margin = 0 end
                 end
-                if otherId > 0 and math.sqrt(distSqr) - math.sqrt(otherD) >= CLEARLY_CLOSER then
+                if otherId > 0 and math.sqrt(distSqr) - math.sqrt(otherD) >= margin then
                     return result(cache, otherId, "lvs_muzzle_name_other_barrel", otherD)
                 end
                 return result(cache, lvsId, "lvs_muzzle_name", distSqr)
@@ -432,6 +436,7 @@ end
 -- turret moves the local origin and simply resolves fresh for that pose.
 local CACHED_LOCAL_RADIUS = 10   -- recoil travel is a few units; barrels sit further apart
 local CACHED_MAX_DIST     = 24
+local REMEMBER_MAX_DIST   = 4    -- learn only from shots that landed on the attachment
 
 local function cachedForGun(ent, muzzlePos, gunKey)
     local cache = GetCache(ent)
@@ -478,7 +483,10 @@ function LVS_GRED_FX.ResolveMuzzleAttachment(ent, muzzlePos, effectDataAtt, gunK
         id, info = resolveImpl(ent, muzzlePos, effectDataAtt)
     end
 
-    if isstring(gunKey) and id and id > 0 then
+    -- Only a confident result is remembered: an attachment that was right at
+    -- the shot origin. A loose pick (shared "aim" point 6-11u off a recoiled
+    -- barrel) would otherwise be locked in for every later shot.
+    if isstring(gunKey) and id and id > 0 and info and info.dist and info.dist <= REMEMBER_MAX_DIST then
         rememberGun(ent, muzzlePos, gunKey, id)
     end
     return id, info
