@@ -364,16 +364,22 @@ local function resolveImpl(ent, muzzlePos, effectDataAtt)
                 -- attachment (Pz.IV Zerstörer: four muzzle_N points, LVS names
                 -- only muzzle_1). A non-barrel attachment merely nearer than
                 -- the named muzzle (sight beside the autocannon) never wins.
+                -- LVS pointing at a non-barrel attachment (Flakpanzer 341
+                -- names "aim", which sits behind the barrels): a real barrel
+                -- point within range wins even when the recoiled shot origin
+                -- happens to be momentarily nearer the "aim" point.
+                if not isMuzzleName(attachmentName(cache, lvsId)) and #cache.named > 0 then
+                    local namedId, namedD = nearestOf(ent, cache.named, muzzlePos, MAX_NAMED_DIST * MAX_NAMED_DIST)
+                    if namedId > 0 and namedId ~= lvsId then
+                        return result(cache, namedId, "lvs_muzzle_name_other_barrel", namedD)
+                    end
+                end
                 local otherId, otherD = nearestOther(ent, cache, muzzlePos, lvsId, AT_BARREL_DIST * AT_BARREL_DIST)
-                local margin = CLEARLY_CLOSER
                 if otherId == 0 and #cache.named > 0 then
                     otherId, otherD = nearestOf(ent, cache.named, muzzlePos, distSqr)
                     if otherId == lvsId then otherId = 0 end
-                    -- LVS pointing at a non-barrel attachment (Flakpanzer 341
-                    -- names "aim"): any nearer real barrel point wins outright.
-                    if not isMuzzleName(attachmentName(cache, lvsId)) then margin = 0 end
                 end
-                if otherId > 0 and math.sqrt(distSqr) - math.sqrt(otherD) >= margin then
+                if otherId > 0 and math.sqrt(distSqr) - math.sqrt(otherD) >= CLEARLY_CLOSER then
                     return result(cache, otherId, "lvs_muzzle_name_other_barrel", otherD)
                 end
                 return result(cache, lvsId, "lvs_muzzle_name", distSqr)
