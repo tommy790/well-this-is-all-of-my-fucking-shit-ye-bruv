@@ -505,10 +505,6 @@ local function ProcessAnchored(entIndex, veh, data)
         return
     end
 
-    if TIV.Rock and TIV.Rock.ApplyLoad then
-        TIV.Rock.ApplyLoad(veh, data, phys, windMPH, stress)
-    end
-
     if stress > 0.40 then
         data.nextShakeTime = data.nextShakeTime or 0
         if CurTime() > data.nextShakeTime then
