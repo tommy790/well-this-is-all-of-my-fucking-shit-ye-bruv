@@ -214,7 +214,7 @@ end
 -- Shot origin -> the same point on the frozen reference, expressed relative
 -- to the live attachment it is nearest to (hull and turret motion cancel
 -- out because that attachment moved with them).
-local function toReferenceSpace(veh, ref, worldPos)
+local function toReferenceSpace(veh, ref, worldPos, worldPos2)
     if veh.SetupBones then pcall(veh.SetupBones, veh) end
     local ok, atts = pcall(veh.GetAttachments, veh)
     local bestId, bestD, bestAtt = nil, math.huge, nil
@@ -233,8 +233,11 @@ local function toReferenceSpace(veh, ref, worldPos)
     if bestId and bestD <= 128 * 128 then
         local ok3, refAtt = pcall(ref.GetAttachment, ref, bestId)
         if ok3 and refAtt and isvector(refAtt.Pos) and isangle(refAtt.Ang) then
-            local off = WorldToLocal(worldPos, angle_zero, bestAtt.Pos, bestAtt.Ang)
-            return LocalToWorld(off, angle_zero, refAtt.Pos, refAtt.Ang)
+            local function map(p)
+                local off = WorldToLocal(p, angle_zero, bestAtt.Pos, bestAtt.Ang)
+                return LocalToWorld(off, angle_zero, refAtt.Pos, refAtt.Ang)
+            end
+            return map(worldPos), worldPos2 and map(worldPos2) or nil
         end
     end
     -- Nothing near: fall back to the vehicle's network (server) transform.
@@ -242,7 +245,8 @@ local function toReferenceSpace(veh, ref, worldPos)
     local ang = veh.GetNetworkAngles and veh:GetNetworkAngles() or nil
     if not isvector(org) or org == vector_origin then org = veh:GetPos() end
     if not isangle(ang) then ang = veh:GetAngles() end
-    return REF_ORIGIN + WorldToLocal(worldPos, angle_zero, org, ang)
+    local function map(p) return REF_ORIGIN + WorldToLocal(p, angle_zero, org, ang) end
+    return map(worldPos), worldPos2 and map(worldPos2) or nil
 end
 
 --[[---------------------------------------------------------------------------
@@ -329,13 +333,58 @@ local function result(cache, id, method, distSqr)
     return id, { method = method, dist = math.sqrt(distSqr), name = attachmentName(cache, id) }
 end
 
-local function resolveImpl(ent, muzzlePos, effectDataAtt)
+-- Barrel-axis match. Recoil and LVS's origin offsets move the shot origin
+-- ALONG the barrel, never sideways, so the attachment of the barrel that
+-- fired is the one lying on the line through the origin in the bullet
+-- direction. A neighbouring barrel, a sight or a suspension point is metres
+-- off that line however close it is in plain distance. Muzzle/barrel-named
+-- attachments are preferred among on-axis candidates.
+local AXIS_PERP_MAX   = 4     -- max sideways offset from the barrel line
+local AXIS_ALONG_MIN  = -12   -- attachment slightly behind the origin
+local AXIS_ALONG_MAX  = 48    -- attachment ahead of a recoiled origin
+
+local function resolveByAxis(ent, cache, muzzlePos, dir)
+    if not cache.atts then return 0 end
+    local bestId, bestScore, bestPerp = 0, math.huge, 0
+    for i = 1, #cache.atts do
+        local id = cache.atts[i] and cache.atts[i].id
+        if id and id > 0 then
+            local att = LVS_GRED_FX.GetAttachmentData(ent, id)
+            if att then
+                local v = att.Pos - muzzlePos
+                local along = v:Dot(dir)
+                if along >= AXIS_ALONG_MIN and along <= AXIS_ALONG_MAX then
+                    local perp = (v - dir * along):Length()
+                    if perp <= AXIS_PERP_MAX then
+                        local score = perp + math.abs(along) * 0.05
+                        if isMuzzleName(cache.nameById[id]) then score = score - AXIS_PERP_MAX end
+                        if score < bestScore then bestId, bestScore, bestPerp = id, score, perp end
+                    end
+                end
+            end
+        end
+    end
+    return bestId, bestPerp
+end
+
+local function resolveImpl(ent, muzzlePos, effectDataAtt, dir)
     if cfg.DebugEnabled() and debugoverlay and debugoverlay.Box then
         local boxPos = (ent == ACTIVE_VEH) and ent:LocalToWorld(muzzlePos - REF_ORIGIN) or muzzlePos
         debugoverlay.Box(boxPos, Vector(MAX_NAMED_DIST, MAX_NAMED_DIST, MAX_NAMED_DIST), 0.5, Color(0, 100, 255, 60))
     end
 
     local cache = GetCache(ent)
+
+    -- 0) Barrel axis (needs the bullet direction).
+    if dir then
+        local id, perp = resolveByAxis(ent, cache, muzzlePos, dir)
+        if id > 0 then
+            local att = LVS_GRED_FX.GetAttachmentData(ent, id)
+            local _, info = result(cache, id, "barrel_axis", att and att.Pos:DistToSqr(muzzlePos) or 0)
+            info.perp = perp
+            return id, info
+        end
+    end
 
     -- 1) EffectData attachment id.
     if effectDataAtt and effectDataAtt > 0 then
@@ -402,7 +451,7 @@ local function resolveImpl(ent, muzzlePos, effectDataAtt)
     return 0, { method = "none", reason = "no attachment near muzzle position" }
 end
 
-local function resolveOnReference(ent, muzzlePos, effectDataAtt)
+local function resolveOnReference(ent, muzzlePos, effectDataAtt, dir)
     local now = CurTime()
     local shotId = ent._lvsGredShotId
     if not shotId or now - (ent._lvsGredShotTime or 0) > SHOT_WINDOW then
@@ -414,7 +463,9 @@ local function resolveOnReference(ent, muzzlePos, effectDataAtt)
     if not IsValid(ref) then return nil end
 
     ACTIVE_REF, ACTIVE_VEH = ref, ent
-    local ok, id, info = pcall(resolveImpl, ent, toReferenceSpace(ent, ref, muzzlePos), effectDataAtt)
+    local refPos, refTip = toReferenceSpace(ent, ref, muzzlePos, dir and (muzzlePos + dir * 16) or nil)
+    local refDir = refTip and (refTip - refPos):GetNormalized() or nil
+    local ok, id, info = pcall(resolveImpl, ent, refPos, effectDataAtt, refDir)
     ACTIVE_REF, ACTIVE_VEH = nil, nil
     if not ok then return nil end
     return id, info
@@ -425,8 +476,8 @@ end
 
     Returns: attachmentID, info
       info = {
-        method = "effectdata" | "lvs_muzzle_name" | "lvs_muzzle_name_other_barrel"
-               | "named_nearest" | "nearest" | "none",
+        method = "barrel_axis" | "remembered" | "effectdata" | "lvs_muzzle_name"
+               | "lvs_muzzle_name_other_barrel" | "named_nearest" | "nearest" | "none",
         dist   = distance from the shot origin (nil for "none"),
         name   = attachment name ("" when unnamed),
       }
@@ -477,19 +528,20 @@ local function rememberGun(ent, muzzlePos, gunKey, id)
     if #entries > 32 then table.remove(entries, 1) end
 end
 
-function LVS_GRED_FX.ResolveMuzzleAttachment(ent, muzzlePos, effectDataAtt, gunKey)
+function LVS_GRED_FX.ResolveMuzzleAttachment(ent, muzzlePos, effectDataAtt, gunKey, dir)
     if not IsValid(ent) then return 0, { method = "none", reason = "invalid entity" } end
     if not isvector(muzzlePos) then return 0, { method = "none", reason = "invalid muzzle position" } end
+    if isvector(dir) and dir:LengthSqr() > 0.0001 then dir = dir:GetNormalized() else dir = nil end
 
     if isstring(gunKey) then
         local id, info = cachedForGun(ent, muzzlePos, gunKey)
         if id then return id, info end
     end
 
-    local id, info = resolveOnReference(ent, muzzlePos, effectDataAtt)
+    local id, info = resolveOnReference(ent, muzzlePos, effectDataAtt, dir)
     if id == nil then
         -- Reference model could not be created: resolve on the live entity.
-        id, info = resolveImpl(ent, muzzlePos, effectDataAtt)
+        id, info = resolveImpl(ent, muzzlePos, effectDataAtt, dir)
     end
 
     -- Only a confident result is remembered: an attachment that was right at

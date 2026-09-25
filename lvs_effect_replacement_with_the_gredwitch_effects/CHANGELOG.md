@@ -15,6 +15,7 @@ including while driving fast and with the turret turned.
 - Fixed fire, ammo-rack and trail effects being restarted every frame instead of once.
 
 **Changed**
+- Barrel detection now follows the line of fire: the barrel point that lies along the direction the shot went is chosen, instead of whichever point is simply nearest. Recoiled barrels, side-by-side barrels and sights next to the gun no longer confuse it.
 - Cannon barrel smoke now plays in two stages: the sharp white burst first, and the lingering smoke only starts once the burst has finished. No more overlapping clouds.
 - Attachment detection is now checked against a still copy of the vehicle instead of the moving one, so vehicle speed no longer affects where effects appear.
 - Tracer path calculation on the server is lighter (half the trace work per machine-gun round).
