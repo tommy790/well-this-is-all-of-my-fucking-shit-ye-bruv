@@ -16,9 +16,11 @@
     How the id is chosen (first match wins)
       0. The attachment(s) the vehicle's own LVS weapon code fires from
          (weaponcode.lua reads them out of the selected weapon's Attack
-         function). One name is final; a multi-barrel set is narrowed by
-         the barrel line of the shot. Everything below is the fallback for
-         weapons whose code fires from a plain vector.
+         function), provided the shot's barrel line actually passes through
+         one of them; a multi-barrel set is narrowed the same way. Code
+         that names one shared point and offsets each barrel from it fails
+         this test on purpose and drops to the chain below, which finds the
+         barrel the shot was offset to.
       1. The attachment id LVS put in the EffectData, if it is close to the
          shot origin and no other attachment is clearly closer. (LVS often
          sends a stale base-model id here -- id 1 on the 2S1 is a suspension
@@ -382,37 +384,36 @@ local function resolveByAxis(ent, cache, muzzlePos, dir, onlyIds)
     return bestId, bestPerp
 end
 
--- Attachments named by the weapon's own LVS Attack code. One id is the
--- answer outright. Several (a "muzzle" .. n multi-barrel, or a helper that
--- names both guns of a mount) are told apart by which one the shot's own
--- barrel line passes through; failing that, the one the shot came from.
-local CODE_MAX_DIST = 64
+-- Attachments named by the weapon's own LVS Attack code. The code tells us
+-- which attachment the gun fires RELATIVE to; it is the muzzle only when the
+-- shot actually originates there. Twin and quad mounts frequently name one
+-- shared point ("aim", "muzzle") and offset the shot sideways per barrel;
+-- in that case the named point is not where the flash belongs, and the
+-- geometric chain below (barrel line first) finds the barrel it was offset
+-- to. So a code candidate is accepted only when the shot's barrel line
+-- passes through it; several candidates are told apart the same way.
+local CODE_NO_DIR_DIST = 8   -- without a fire direction, only a shot at the point itself
 
 local function resolveByWeaponCode(ent, cache, muzzlePos, dir, code)
     local ids = code.ids
-    if #ids == 1 then
-        local att = LVS_GRED_FX.GetAttachmentData(ent, ids[1])
-        if not att then return 0 end
-        local id, info = result(cache, ids[1], "weapon_code", att.Pos:DistToSqr(muzzlePos))
-        info.reader = code.reader
-        return id, info
-    end
     if dir then
         local id, perp = resolveByAxis(ent, cache, muzzlePos, dir, ids)
         if id > 0 then
             local att = LVS_GRED_FX.GetAttachmentData(ent, id)
-            local _, info = result(cache, id, "weapon_code_axis", att and att.Pos:DistToSqr(muzzlePos) or 0)
+            local _, info = result(cache, id, #ids == 1 and "weapon_code" or "weapon_code_axis",
+                att and att.Pos:DistToSqr(muzzlePos) or 0)
             info.perp, info.reader = perp, code.reader
             return id, info
         end
+        return 0, "shot origin not on the line through the code's attachment(s)"
     end
-    local id, d = nearestOf(ent, ids, muzzlePos, CODE_MAX_DIST * CODE_MAX_DIST)
+    local id, d = nearestOf(ent, ids, muzzlePos, CODE_NO_DIR_DIST * CODE_NO_DIR_DIST)
     if id > 0 then
-        local _, info = result(cache, id, "weapon_code_nearest", d)
+        local _, info = result(cache, id, "weapon_code", d)
         info.reader = code.reader
         return id, info
     end
-    return 0
+    return 0, "shot origin not at the code's attachment(s)"
 end
 
 local function resolveImpl(ent, muzzlePos, effectDataAtt, dir, code)
@@ -424,9 +425,11 @@ local function resolveImpl(ent, muzzlePos, effectDataAtt, dir, code)
     local cache = GetCache(ent)
 
     -- What the vehicle's weapon configuration says fires from where.
+    local codeReason = nil
     if code then
         local id, info = resolveByWeaponCode(ent, cache, muzzlePos, dir, code)
         if id > 0 then return id, info end
+        codeReason = info
     end
 
     -- 0) Barrel axis (needs the bullet direction).
@@ -522,6 +525,9 @@ local function resolveOnReference(ent, muzzlePos, effectDataAtt, dir, code)
     local ok, id, info = pcall(resolveImpl, ent, refPos, effectDataAtt, refDir, code)
     ACTIVE_REF, ACTIVE_VEH = nil, nil
     if not ok then return nil end
+    if code and info and not info.reader then
+        info.code = table.concat(code.names, ",")
+    end
     return id, info
 end
 
@@ -530,7 +536,7 @@ end
 
     Returns: attachmentID, info
       info = {
-        method = "weapon_code" | "weapon_code_axis" | "weapon_code_nearest"
+        method = "weapon_code" | "weapon_code_axis"
                | "barrel_axis" | "remembered" | "effectdata" | "lvs_muzzle_name"
                | "lvs_muzzle_name_other_barrel" | "named_nearest" | "nearest" | "none",
         dist   = distance from the shot origin (nil for "none"),

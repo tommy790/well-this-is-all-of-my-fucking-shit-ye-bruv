@@ -182,7 +182,8 @@ function LVS_GRED_FX_MUZZLEFLASH.Spawn(effectName, self, data)
             "dist:", info and info.dist and string.format("%.1f", info.dist) or "n/a",
             "off-axis:", info and info.perp and string.format("%.1f", info.perp) or "-",
             "name:", info and info.name or "?",
-            "reader:", info and info.reader or "-")
+            "reader:", info and info.reader or "-",
+            "code-named:", info and info.code or "-")
     end
 
     local isArtillery = effectName == "lvs_haubitze_muzzle"
