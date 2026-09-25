@@ -719,9 +719,6 @@ end
 -- Locates the active tornado entity to evaluate real-time core/side interception
 -- and generate forward trajectory path prediction waypoints.
 -- ============================================================================
-local PATH_CACHE_SECONDS  = 0.5
-local PATH_CACHE_MOVE_SQR = 200 * 200  -- re-simulate early if the vortex jumps
-
 function TIV.Wind.GetNearestActiveTornado(pos, maxDist)
     maxDist = maxDist or 45000
     local maxDistSqr = maxDist * maxDist
@@ -885,19 +882,7 @@ function TIV.Wind.GetNearestActiveTornado(pos, maxDist)
     -- Simulates the tornado's true trajectory taking into account turning momentum,
     -- mod physics (GStorms noise, XT3 deviation, smart targets), map bounds, and obstacle deflection.
     -- ========================================================================
-    -- The path simulation runs 120 steps with two traces each and depends only
-    -- on the tornado, not the observer. Radar (0.35 s) and progression (1 s)
-    -- both ask for it per vehicle, so reuse one prediction per tornado for a
-    -- short window instead of re-simulating on every request.
-    local waypoints
-    local pathCache = bestEnt._TIV_PathCache
-    if pathCache and now - pathCache.time < PATH_CACHE_SECONDS
-        and pathCache.pos:DistToSqr(tPos) < PATH_CACHE_MOVE_SQR then
-        waypoints = pathCache.waypoints
-    else
-        waypoints = TIV.Wind.CalculateTornadoFuturePath(bestEnt, tPos, heading, speedUnits, speedMPH, coreRadius, outerRadius, pos)
-        bestEnt._TIV_PathCache = { time = now, pos = tPos, waypoints = waypoints }
-    end
+    local waypoints = TIV.Wind.CalculateTornadoFuturePath(bestEnt, tPos, heading, speedUnits, speedMPH, coreRadius, outerRadius, pos)
 
     -- Closest Point of Approach (CPA) evaluated along the actual calculated trajectory
     local cpaDist = dist2D
