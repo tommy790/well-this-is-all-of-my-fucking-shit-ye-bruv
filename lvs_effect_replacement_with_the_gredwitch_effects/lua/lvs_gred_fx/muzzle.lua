@@ -339,9 +339,14 @@ end
 -- direction. A neighbouring barrel, a sight or a suspension point is metres
 -- off that line however close it is in plain distance. Muzzle/barrel-named
 -- attachments are preferred among on-axis candidates.
+-- The along-barrel window is deliberately short. Recoil and LVS origin
+-- offsets seen so far are 6-14u; a coaxial MG runs parallel to the cannon a
+-- few units beside it, so with a long window the cannon's muzzle 47u ahead
+-- sits inside the MG's line of fire (BT-7). Anything further along is left
+-- to the fallback chain, which never reached that far either.
 local AXIS_PERP_MAX   = 4     -- max sideways offset from the barrel line
 local AXIS_ALONG_MIN  = -12   -- attachment slightly behind the origin
-local AXIS_ALONG_MAX  = 48    -- attachment ahead of a recoiled origin
+local AXIS_ALONG_MAX  = 24    -- attachment ahead of a recoiled origin
 
 local function resolveByAxis(ent, cache, muzzlePos, dir)
     if not cache.atts then return 0 end
