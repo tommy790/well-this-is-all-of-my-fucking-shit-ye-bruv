@@ -1,26 +1,39 @@
 --[[---------------------------------------------------------------------------
     LVS → Gredwitch FX : tracer system (client-side)
 
-    THE PROVEN TRACER MECHANISM (restored from the original addon):
+    Gredwitch's tracer PCF particles, flying LVS's ballistics.
 
-    The actual gred tracer beam is rendered by GREDWITCH'S OWN BASE from the
-    server's gred_net_createtracer message (see lvs_gred_fx/sv_tracer.lua).
-    This module does NOT create any tracer particle system itself — it only:
+    gred's gred_tracers_<color>_<caliber> (gred_particles.pcf) cannot be
+    steered once emitted: "move particles between 2 control points" fixes
+    its speed at emission and sets its lifetime to the distance to CP1, and
+    its Movement Basic has no gravity. So this addon ships
+    particles/lvs_gred_tracers.pcf, generated from gred's file by
+    tools/pcf_tool.py: every gred tracer definition copied byte for byte
+    (renderer, sprite trail, colours, sheet sequences, smoke and glow
+    children) with exactly three edits:
 
-      * SUPPRESSES the original LVS tracer visual (the wrapper owns the effect
-        registration, so the original LVS beam never renders — no duplicate
-        LVS + Gred tracer),
-      * keeps the LVS wrapper instance alive while the LVS bullet exists, so
-        the override wrapper's silent original Think keeps firing
-        lvs_bullet_impact_ap at LVS's exact timing and decides when the
-        tracer is over,
-      * records each shot (entity, muzzle position, tracer name, mapping) so
-        the muzzle-flash system can pair the correct PCF and the impact
-        system can pick the correct caliber.
+      * the move-between-points initializer is removed,
+      * "Remap Control Point to Vector" copies control point 1's position
+        into the particle's previous position. Source particles carry
+        velocity implicitly as (xyz - prev_xyz) / m_flPreviousDt, and on
+        the emission frame m_flPreviousDt is the fixed 0.05 s seeded by
+        SimulateFirstFrame (particles.cpp, UpdatePrevControlPoints(0.05f)),
+        so CP1 = Src - velocity * 0.05 launches the particle at exactly the
+        LVS round's velocity,
+      * lifetime 5 s (LVS's cap); two variants: "<name>" whose Movement
+        Basic gravity is (0,0,-1200) and "<name>_flat" with none.
 
-    This is the exact architecture that worked in the original addon:
-    rendering delegated to gred's own battle-tested pipeline, nothing fragile
-    to reimplement on the client.
+    Why -1200: LVS flies EnableBallistics rounds as Src + Dir*V*t + g*t^2
+    with g = physenv.GetGravity() (-600 at default sv_gravity), so the
+    round's acceleration is 2g. The particle integrates the same motion,
+    so the tracer stays on the LVS round for the whole flight. With a
+    non-default sv_gravity the drop drifts; that is logged once.
+
+    The effect instance lives exactly as long as the LVS bullet (the
+    wrapper's silent original Think still fires lvs_bullet_impact_ap at
+    LVS's timing); when LVS removes the bullet the particle system is
+    destroyed, as gred does at its own end point. Each shot is recorded so
+    the muzzle-flash and impact systems can pair caliber/PCF with it.
 -----------------------------------------------------------------------------]]
 
 if not CLIENT then return end
@@ -135,6 +148,25 @@ function LVS_GRED_FX_TRACER.CaliberFor(ent)
     return LAST_CALIBER
 end
 
+-- Tell the server this client draws its own tracers, so the server-side
+-- straight gred beam (for clients without the addon) is not sent to us.
+local announceTries = 0
+local function announce()
+    if not net or not net.Start then return end
+    local ok = pcall(function()
+        net.Start("lvs_gred_fx_client")
+        net.SendToServer()
+    end)
+    -- The string is missing only when the server does not run this addon;
+    -- retry briefly in case it is still initialising, then give up.
+    announceTries = announceTries + 1
+    if not ok and announceTries < 4 then timer.Simple(5, announce) end
+end
+hook.Add("InitPostEntity", "lvs_gred_fx_tracer_announce", function()
+    timer.Simple(1, announce)
+end)
+if LocalPlayer and IsValid(LocalPlayer()) then announce() end
+
 local function getBullet(id)
     if LVS and LVS.GetBullet then
         return LVS:GetBullet(id)
@@ -143,14 +175,54 @@ local function getBullet(id)
 end
 
 --[[---------------------------------------------------------------------------
+    Generated tracer systems.
+-----------------------------------------------------------------------------]]
+local PCF_FILE = "particles/lvs_gred_tracers.pcf"
+local TRACER_COLORS   = { "red", "green", "white", "yellow" }
+local TRACER_CALIBERS = { "7mm", "12mm", "20mm", "30mm", "40mm" }
+
+game.AddParticles(PCF_FILE)
+for _, c in ipairs(TRACER_COLORS) do
+    for _, k in ipairs(TRACER_CALIBERS) do
+        PrecacheParticleSystem("lvs_gred_tracers_" .. c .. "_" .. k)
+        PrecacheParticleSystem("lvs_gred_tracers_" .. c .. "_" .. k .. "_flat")
+    end
+end
+
+local function systemName(map, ballistic)
+    local color = map and map.color or "white"
+    local caliber = map and map.caliber or "20mm"
+    if not table.HasValue(TRACER_COLORS, color) then color = "white" end
+    if not table.HasValue(TRACER_CALIBERS, caliber) then caliber = "40mm" end
+    return "lvs_gred_tracers_" .. color .. "_" .. caliber .. (ballistic and "" or "_flat")
+end
+
+-- CParticleCollection::SimulateFirstFrame seeds m_flPreviousDt with this.
+local FIRST_FRAME_DT = 0.05
+
+local warnedGravity = false
+local function checkGravity()
+    if warnedGravity then return end
+    local g = physenv.GetGravity()
+    if isvector(g) and math.abs(g.z + 600) > 1 then
+        warnedGravity = true
+        print(string.format("[lvs_gred_fx] sv_gravity gives %.0f; tracer drop is generated for -600 and will drift from LVS rounds.", g.z))
+    end
+end
+
+local function stopSystem(self)
+    local psys = self._psys
+    self._psys = nil
+    if LVS_GRED_FX.PsysValid(psys) then
+        pcall(psys.StopEmission, psys, false, true)
+    end
+end
+
+--[[---------------------------------------------------------------------------
     Tracer effect lifecycle. `data` is the LVS tracer EffectData:
       Origin        = bullet.Src (world muzzle position)
       Normal        = bullet.Dir
       MaterialIndex = LVS bullet index
-
-    The visual beam is rendered by the gred base from the server's
-    gred_net_createtracer message; this handler only suppresses the LVS
-    tracer visual and keeps the instance alive for LVS's own timing.
 -----------------------------------------------------------------------------]]
 function LVS_GRED_FX_TRACER.Init(name, self, data)
     self._gmode = "tracer"
@@ -180,18 +252,40 @@ function LVS_GRED_FX_TRACER.Init(name, self, data)
         LVS_GRED_FX_TRACER.NoteShot(ent, name, srcPos, map)
     end
 
-    -- Suppress the LVS tracer visual. The gred beam arrives via the server's
-    -- gred_net_createtracer message; the wrapper's silent original Think
-    -- still drives the lifetime and fires lvs_bullet_impact_ap when the
-    -- bullet is gone.
+    -- Without the LVS bullet there is no velocity to give the particle;
+    -- the original LVS tracer handles that case.
+    if not bullet or not isvector(bullet.Src) then return false end
+
+    local dir = bullet.StartDir or bullet:GetDir()
+    local speed = bullet.Velocity or 0
+    if not isvector(dir) or speed <= 0 then return false end
+
+    local ballistic = bullet.EnableBallistics == true
+    if ballistic then checkGravity() end
+
+    local psysName = systemName(map, ballistic)
+    -- gred_particle_tracer creates its system on the world entity at the
+    -- muzzle; same here.
+    local psys = CreateParticleSystem(Entity(0), psysName, PATTACH_WORLDORIGIN, 0, bullet.Src)
+    if not LVS_GRED_FX.PsysValid(psys) then
+        Debug("tracer system missing:", psysName)
+        return false
+    end
+
+    -- CP0 = launch point. CP1 = where the particle "was" one first-frame
+    -- step (0.05 s) ago: the generated definition copies it into prev_xyz,
+    -- which is how the engine stores velocity. Both must be set before the
+    -- system's first simulation, i.e. right here.
+    psys:SetControlPoint(0, bullet.Src)
+    psys:SetControlPoint(1, bullet.Src - dir * (speed * FIRST_FRAME_DT))
+    self._psys = psys
+
     return true
 end
 
 function LVS_GRED_FX_TRACER.Think(self)
-    -- Keep the effect instance alive while the LVS bullet exists so the
-    -- wrapper's silent original Think can fire lvs_bullet_impact_ap and
-    -- decide the exact end of the tracer. Once the bullet is gone, LVS says
-    -- the tracer is over too.
+    -- Alive exactly as long as the LVS bullet: LVS decides when the round is
+    -- gone (hit, water, 5 s), and with it the tracer.
     if not getBullet(self._bulletID) then
         LVS_GRED_FX_TRACER.Stop(self)
         return false
@@ -200,5 +294,5 @@ function LVS_GRED_FX_TRACER.Think(self)
 end
 
 function LVS_GRED_FX_TRACER.Stop(self)
-    -- No client-owned particle system; nothing to stop.
+    stopSystem(self)
 end

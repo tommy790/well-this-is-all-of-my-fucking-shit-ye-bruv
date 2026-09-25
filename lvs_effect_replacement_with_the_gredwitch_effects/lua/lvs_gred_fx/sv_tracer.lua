@@ -1,14 +1,13 @@
 --[[---------------------------------------------------------------------------
     LVS → Gredwitch FX : server tracer relay (server-side)
 
-    THE PROVEN TRACER MECHANISM (restored from the original addon):
+    Clients running this addon draw the Gredwitch tracer themselves, on the
+    LVS bullet object, so it follows LVS's speed and drop (tracer.lua). They
+    announce themselves once (lvs_gred_fx_client) and are excluded here.
 
-    Rendering is delegated to Gredwitch's OWN base. After every mapped LVS
-    shot, this module sends gred's own net message (gred_net_createtracer),
-    which gred's client base renders with its own battle-tested
-    gred_particle_tracer effect — the exact same path gred's tanks use. The
-    addon itself never creates a tracer particle system, so there is nothing
-    here that can fail to render.
+    For every other client that has the Gredwitch base, this relay still
+    sends gred's own gred_net_createtracer after each mapped LVS shot, so
+    they at least get the straight gred beam that gred's tanks use.
 
       * LVS:FireBullet is called UNCHANGED first — damage, ballistics,
         projectile physics, networking and firing mechanics are untouched,
@@ -18,15 +17,24 @@
         purely for the visual; it never feeds back into LVS,
       * the whole relay is pcall-guarded so a failure can never break LVS
         firing or the weapon that called it.
-
-    Clients with this addon suppress the original LVS tracer visual (see
-    tracer.lua), so the gred beam is the single tracer. Clients without this
-    addon but with gred base will also render the beam (gred owns the channel).
 -----------------------------------------------------------------------------]]
 
 if not SERVER then return end
 
 LVS_GRED_FX_SV = LVS_GRED_FX_SV or {}
+
+util.AddNetworkString("lvs_gred_fx_client")
+
+-- Players whose client draws the tracer itself.
+LVS_GRED_FX_SV.SelfDrawing = LVS_GRED_FX_SV.SelfDrawing or {}
+
+net.Receive("lvs_gred_fx_client", function(_, ply)
+    if IsValid(ply) then LVS_GRED_FX_SV.SelfDrawing[ply] = true end
+end)
+
+hook.Add("PlayerDisconnected", "lvs_gred_fx_client_forget", function(ply)
+    LVS_GRED_FX_SV.SelfDrawing[ply] = nil
+end)
 
 -- Mirror of the client config mapping (the client config is client-only).
 local TRACER_MAP = {
@@ -64,9 +72,8 @@ local COL_TABLE = {
 -- (gred_particles.pcf, "move particles between 2 control points"). Within a
 -- colour the five caliber definitions differ ONLY in this speed (white and
 -- yellow 7mm additionally lack the glow child), so the caliber index is in
--- effect a speed selector: for each shot the definition whose speed is
--- closest to the LVS round's Velocity is sent, and the tracer travels at
--- (nearly) the LVS round's speed instead of a fixed one per mapped caliber.
+-- effect a speed selector: the definition whose speed is closest to the
+-- LVS round's Velocity is sent.
 local PCF_SPEED = {
     default = { [1] = 95000, [2] = 89000, [3] = 70250, [4] = 54890, [5] = 46240 },
     red     = { [1] = 95000, [2] = 89000, [3] = 36000, [4] = 54890, [5] = 46240 },
@@ -153,6 +160,15 @@ function LVS_GRED_FX_SV.SendTracer(data)
         filter = filter:GetCrosshairFilterEnts()
     end
 
+    -- Only clients who can see the shot (as LVS's own bullet networking
+    -- does) and who do not draw the tracer themselves.
+    local rf = RecipientFilter()
+    rf:AddPVS(pos)
+    for ply in pairs(LVS_GRED_FX_SV.SelfDrawing) do
+        if IsValid(ply) then rf:RemovePlayer(ply) else LVS_GRED_FX_SV.SelfDrawing[ply] = nil end
+    end
+    if rf:GetCount() == 0 then return end
+
     local endpos = ComputeEndpoint(pos, dir, data.Velocity, data.EnableBallistics == true, filter)
     if not isvector(endpos) then return end
 
@@ -161,11 +177,7 @@ function LVS_GRED_FX_SV.SendTracer(data)
         net.WriteUInt(calID, 3)
         net.WriteUInt(colID, 3)
         net.WriteVector(endpos)
-
-    -- Only send to clients who can actually see the shot (same as LVS's own
-    -- bullet networking) — net.Broadcast would push every tracer to every
-    -- player, wasting bandwidth with many vehicles firing in multiplayer.
-    net.SendPVS(pos)
+    net.Send(rf)
 end
 
 local function TryOverrideFireBullet()
