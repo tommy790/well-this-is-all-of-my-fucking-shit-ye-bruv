@@ -60,6 +60,30 @@ local COL_TABLE = {
     ["red"] = 1, ["green"] = 2, ["white"] = 3, ["yellow"] = 4,
 }
 
+-- Launch speed baked into each gred_tracers_<color>_<caliber> definition
+-- (gred_particles.pcf, "move particles between 2 control points"). Within a
+-- colour the five caliber definitions differ ONLY in this speed (white and
+-- yellow 7mm additionally lack the glow child), so the caliber index is in
+-- effect a speed selector: for each shot the definition whose speed is
+-- closest to the LVS round's Velocity is sent, and the tracer travels at
+-- (nearly) the LVS round's speed instead of a fixed one per mapped caliber.
+local PCF_SPEED = {
+    default = { [1] = 95000, [2] = 89000, [3] = 70250, [4] = 54890, [5] = 46240 },
+    red     = { [1] = 95000, [2] = 89000, [3] = 36000, [4] = 54890, [5] = 46240 },
+}
+
+local function CaliberForSpeed(color, velocity)
+    local speeds = PCF_SPEED[color] or PCF_SPEED.default
+    local best, bestErr
+    for calID, speed in pairs(speeds) do
+        local err = math.abs(speed - velocity)
+        if not bestErr or err < bestErr then
+            best, bestErr = calID, err
+        end
+    end
+    return best
+end
+
 -- Match LVS's own spread application so the beam lines up with the shot.
 local function ApplySpread(dir, spreadVec)
     if not spreadVec or spreadVec:LengthSqr() <= 0 then return dir end
@@ -110,7 +134,13 @@ function LVS_GRED_FX_SV.SendTracer(data)
     if not gred then return end
 
     local color, caliber = mapping[1], mapping[2]
-    local calID, colID = CAL_TABLE["wac_base_" .. caliber], COL_TABLE[color]
+    local colID = COL_TABLE[color]
+    local calID
+    if isnumber(data.Velocity) and data.Velocity > 0 then
+        calID = CaliberForSpeed(color, data.Velocity)
+    else
+        calID = CAL_TABLE["wac_base_" .. caliber]
+    end
     if not calID or not colID then return end
 
     local pos = data.Src

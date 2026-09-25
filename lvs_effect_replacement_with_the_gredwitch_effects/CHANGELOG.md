@@ -16,6 +16,7 @@ including while driving fast and with the turret turned.
 - Fixed fire, ammo-rack and trail effects being restarted every frame instead of once.
 
 **Changed**
+- Tracer speed follows the LVS round: gred's five caliber tracer definitions per colour differ only in their baked-in launch speed (95000 / 89000 / 70250 / 54890 / 46240 u/s; red 20mm 36000), so the relay now sends the definition whose speed is closest to the weapon's LVS `Velocity` instead of a fixed caliber per tracer name. Look is unchanged; the mapped caliber is only used when the shot carries no velocity.
 - Which barrel a gun fires from is now read from the vehicle's own LVS weapon setup: the attachment named in the weapon's fire code is used when the shot really leaves from it, and multi-barrel guns (`"muzzle_" .. n`) are narrowed down by the line of fire. Twin and quad mounts whose code names one shared point and offsets each barrel from it are detected and resolved to the actual barrel instead of all flashing from that one point.
 - Smoke canisters now use the Gredwitch smoke cloud, refreshed every 3 seconds while the canister is active so it never piles up or lingers after it's spent.
 - Barrel detection now follows the line of fire: the barrel point that lies along the direction the shot went is chosen, instead of whichever point is simply nearest. Recoiled barrels, side-by-side barrels and sights next to the gun no longer confuse it.
