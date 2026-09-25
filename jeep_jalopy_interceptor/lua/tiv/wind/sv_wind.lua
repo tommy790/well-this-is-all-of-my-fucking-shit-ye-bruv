@@ -1062,7 +1062,15 @@ timer.Create("TIV_WindThink", 0.1, 0, function()
                     -- Keep the global cache updated as the last-seen sample.
                     TIV.Wind.CurrentMPH = mph
                     TIV.Wind.Direction  = dir
+                else
+                    -- Every provider answered "no storm here" (a removed tornado
+                    -- included). The previous sample must not survive that, or
+                    -- the vehicle keeps getting shoved by wind that no longer exists.
+                    TIV.Wind.PerVehicle[entry.idx] = nil
                 end
+            end
+            if not next(TIV.Wind.PerVehicle) then
+                TIV.Wind.CurrentMPH = TIV.Config.WindDefault or 0
             end
         else
             local ply = player.GetAll()[1]
@@ -1071,6 +1079,8 @@ timer.Create("TIV_WindThink", 0.1, 0, function()
                 if mph ~= nil then
                     TIV.Wind.CurrentMPH = mph
                     TIV.Wind.Direction  = dir
+                else
+                    TIV.Wind.CurrentMPH = TIV.Config.WindDefault or 0
                 end
             end
         end

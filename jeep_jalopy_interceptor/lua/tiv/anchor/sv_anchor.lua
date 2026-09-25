@@ -280,23 +280,36 @@ function TIV.Anchor.AttachAll(veh, data)
     end
 end
 
--- 0-spike mode: hold the chassis to the world directly.
+-- 0-spike mode: hold the chassis to the world directly. One socket per mount
+-- point (the same corners the springs pulled on), so the pose is fixed by
+-- geometry exactly as it is by four planted spikes. A single centre socket
+-- left the chassis free to rotate into its angular limits, and the compressed
+-- suspension pushing against those limits is what shook the vehicle.
 function TIV.Anchor.AttachWorld(veh, data)
     if not IsValid(veh) then return end
     local world = game.GetWorld()
     if not world then return end
-    local limit = GetPivotLimit() * 0.5
-    local bs = constraint.AdvBallsocket(
-        veh, world, 0, 0,
-        vector_origin, veh:GetPos(),
-        TIV.Config.BallSocketForceLimit or 0, 0,
-        -limit, -limit, -limit,
-         limit,  limit,  limit,
-        0, 0, 0,
-        0, 0, 0,
-        1
-    )
-    if IsValid(bs) then Track(data, bs, nil, "ballsocket", { isWorldAnchor = true }) end
+    local limit = GetPivotLimit()
+    local created = 0
+    for _, mountLocal in ipairs(MountPoints(veh, data)) do
+        local bs = constraint.AdvBallsocket(
+            veh, world, 0, 0,
+            mountLocal, veh:LocalToWorld(mountLocal),
+            TIV.Config.BallSocketForceLimit or 0, 0,
+            -limit, -limit, -limit,
+             limit,  limit,  limit,
+            0, 0, 0,
+            0, 0, 0,
+            1
+        )
+        if IsValid(bs) then
+            Track(data, bs, nil, "ballsocket", { isWorldAnchor = true, localPos = mountLocal })
+            created = created + 1
+        end
+    end
+    if created == 0 then
+        print(string.format("[TIV] WARNING: world anchor failed for #%d", veh:EntIndex()))
+    end
 end
 
 -- ============================================================================

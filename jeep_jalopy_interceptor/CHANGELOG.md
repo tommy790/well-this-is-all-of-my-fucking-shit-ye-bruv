@@ -25,6 +25,9 @@ down, held and let go by actual forces and constraints.
 - Fixed lofting deleting the player's own welds and constraints on the vehicle.
 - Fixed the anchor integrity check stopping after the first spike.
 - Fixed the vehicle jittering while lowering and raising.
+- Fixed the vehicle shaking violently when deployed with no spikes fitted — it is now held at all four corners, the same way planted spikes hold it, instead of by a single pivot at its centre.
+- Fixed the vehicle shaking and bouncing after a loft once the tornado was removed — the last wind reading was never cleared, so it kept being pushed by a storm that no longer existed.
 
 **Removed**
+- Removed the visual anchor rocking (`tiv_visual_rock`).
 - Removed the per-tick "re-plant" that kept nudging spikes back into position — planted spikes are now static and don't need it.
