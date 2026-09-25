@@ -163,6 +163,9 @@ function LVS_GRED_FX.Stop(name, self)
 end
 
 function LVS_GRED_FX.Render(name, self)
-    -- Render is unused: all replacement visuals are particle systems, which
-    -- the engine renders itself.
+    -- Tracers are drawn by hand at the LVS bullet's position (tracer.lua);
+    -- every other replacement is a particle system the engine renders.
+    if self._gmode == "tracer" then
+        LVS_GRED_FX_TRACER.Render(self)
+    end
 end

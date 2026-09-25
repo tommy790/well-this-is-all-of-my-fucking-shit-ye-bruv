@@ -1,12 +1,12 @@
 --[[---------------------------------------------------------------------------
     LVS → Gredwitch FX : shared init.
 
-    Visual replacement logic is client-side. The single server-side module is
-    a purely visual tracer relay: after every mapped LVS shot it sends gred's
-    own gred_net_createtracer message so the Gredwitch base renders the tracer
-    beam on clients (the proven mechanism from the original addon). LVS
-    damage, ballistics, projectile physics, weapon logic, vehicle physics,
-    networking and firing mechanics all run untouched.
+    Visual replacement logic is client-side; tracers are drawn on the client
+    over LVS's own bullet objects. The single server-side module is a purely
+    visual relay that sends gred's straight gred_net_createtracer beam only
+    to clients that do not run this addon. LVS damage, ballistics,
+    projectile physics, weapon logic, vehicle physics, networking and firing
+    mechanics all run untouched.
 
     Client modules are shipped via AddCSLuaFile and included by
     autorun/client/cl_lvs_gred_fx_override.lua in dependency order. The server
