@@ -42,6 +42,7 @@ local MODULES = {
     "lvs_gred_fx/barrelsmoke.lua",
     "lvs_gred_fx/impacts.lua",
     "lvs_gred_fx/trails.lua",
+    "lvs_gred_fx/persistent.lua",
     "lvs_gred_fx/bridge.lua",
 }
 

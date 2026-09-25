@@ -10,11 +10,13 @@ including while driving fast and with the turret turned.
 - Fixed flashes attaching to the wrong barrel while the vehicle is moving fast with the turret turned.
 - Fixed vehicles with two guns on one turret (for example BMD-4M) mixing up which barrel the flash appears on.
 - Fixed a wrong barrel getting "stuck": once the addon picked a wrong spot at a given turret angle, it kept using it for every following shot.
-- Fixed the smoke canister (defence smoke) effect not showing — it now uses LVS's own smoke.
+- Fixed ammo rack fire flickering out after two seconds while the rack is still burning — it now burns as one steady fire until LVS puts it out.
+- Fixed heavy frame drops when driving on water — the spray no longer starts a new effect every tick for every wheel.
 - Fixed effects sometimes being created twice per shot after a Lua reload.
 - Fixed fire, ammo-rack and trail effects being restarted every frame instead of once.
 
 **Changed**
+- Smoke canisters now use the Gredwitch smoke cloud, refreshed every 3 seconds while the canister is active so it never piles up or lingers after it's spent.
 - Barrel detection now follows the line of fire: the barrel point that lies along the direction the shot went is chosen, instead of whichever point is simply nearest. Recoiled barrels, side-by-side barrels and sights next to the gun no longer confuse it.
 - Cannon barrel smoke now plays in two stages: the sharp white burst first, and the lingering smoke only starts once the burst has finished. No more overlapping clouds.
 - Attachment detection is now checked against a still copy of the vehicle instead of the moving one, so vehicle speed no longer affects where effects appear.
@@ -26,4 +28,3 @@ including while driving fast and with the turret turned.
 
 **Removed**
 - Removed the old "remembered barrel position" shortcut that caused stuck wrong barrels.
-- Removed the replacement smoke canister effect (LVS's own is used instead).

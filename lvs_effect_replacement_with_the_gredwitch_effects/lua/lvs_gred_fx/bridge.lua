@@ -116,7 +116,10 @@ function LVS_GRED_FX.Init(name, self, data)
         return LVS_GRED_FX_TRAILS.InitEntFire(name, self, data)
     end
     if name:find("lvs_ammorack_fire", 1, true) then
-        return LVS_GRED_FX_TRAILS.InitAmmoRack(name, self, data)
+        return LVS_GRED_FX_PERSISTENT.AmmoRack(name, self, data)
+    end
+    if name == "lvs_defence_smoke" then
+        return LVS_GRED_FX_PERSISTENT.SmokeScreen(name, self, data)
     end
     if name == "lvs_laser_charge" then
         return LVS_GRED_FX_TRAILS.InitLaserCharge(name, self, data)

@@ -215,6 +215,16 @@ C.EntFirePcf = {
 
 C.AmmoRackPcf = "flame_jet"
 
+-- Defence smoke canister (lvs_item_smoke). One gred cloud per canister,
+-- re-armed every SmokeScreenEmitTime seconds while LVS keeps calling, so a
+-- 30 s canister never accumulates a single ever-growing emitter.
+C.SmokeScreenPcf      = "smokegrenade"
+C.SmokeScreenEmitTime = 3
+
+-- Water spray from hulls/wheels (lvs_hover_water & co.) is fired every
+-- tick per contact point; one live system per contact slot at a time.
+C.WaterSlotDist = 48
+
 -- Name of the cvar gated "barrel smoke" toggle (used by the menu).
 C.SmokeCvarName = "lvs_gred_fx_barrel_smoke"
 

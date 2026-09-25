@@ -45,8 +45,8 @@ return {
     "lvs_missiletrail",
     "lvs_proton_trail",
 
-    -- Smoke / exhaust: lvs_defence_smoke is deliberately NOT overridden;
-    -- the native LVS canister smoke is used.
+    -- Smoke canister
+    "lvs_defence_smoke",
 
     -- Physics (scrape, water, etc.)
     "lvs_hover_water",

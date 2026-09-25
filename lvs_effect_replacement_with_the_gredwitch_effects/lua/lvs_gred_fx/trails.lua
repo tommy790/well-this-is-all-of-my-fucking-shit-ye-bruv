@@ -8,8 +8,6 @@
       the local fire offset, following it.
     * lvs_carengine_fire / lvs_carfueltank_fire → gred fire, attached to the
       vehicle at the fire position (PATTACH_ABSORIGIN_FOLLOW + local offset).
-    * lvs_ammorack_fire → violent flame jet on the vehicle; one jet per
-      vehicle, replaced on re-fire.
     * lvs_laser_charge → short sparking charge effect; sparks are attached to
       the emitter attachment with PATTACH_POINT_FOLLOW so they follow the
       weapon while charging.
@@ -139,44 +137,6 @@ function LVS_GRED_FX_TRAILS.InitEntFire(name, self, data)
     if ok and LVS_GRED_FX.PsysValid(psys) then
         LVS_GRED_FX.StopAfter(psys, 1.5, false)
         FIRE_ACTIVE[ent] = { psys = psys }
-        return true
-    end
-
-    return false
-end
-
---[[---------------------------------------------------------------------------
-    Ammo rack fire — violent jet, one per vehicle, replaced on re-fire.
------------------------------------------------------------------------------]]
-local AMMORACK_ACTIVE = setmetatable({}, { __mode = "k" })
-
-function LVS_GRED_FX_TRAILS.InitAmmoRack(name, self, data)
-    self._gmode = "oneshot"
-
-    local ent = data.GetEntity and data:GetEntity() or nil
-    if not IsValid(ent) or not cfg.Enabled() then return false end
-
-    local pcf = cfg.AmmoRackPcf
-    if not LVS_GRED_FX.Preload(pcf) then return false end
-
-    local prev = AMMORACK_ACTIVE[ent]
-    if prev then
-        -- Already burning; keep the existing jet alive.
-        if LVS_GRED_FX.PsysValid(prev.psys) then
-            prev.expires = CurTime() + 2
-            return true
-        end
-        AMMORACK_ACTIVE[ent] = nil
-    end
-
-    local firePos = data.GetOrigin and data:GetOrigin() or ent:GetPos()
-    local offset = isvector(firePos) and ent:WorldToLocal(firePos) or vector_origin
-
-    local ok, psys = pcall(CreateParticleSystem, ent, pcf, PATTACH_ABSORIGIN_FOLLOW, 0, offset)
-
-    if ok and LVS_GRED_FX.PsysValid(psys) then
-        LVS_GRED_FX.StopAfter(psys, 2.2, false)
-        AMMORACK_ACTIVE[ent] = { psys = psys, expires = CurTime() + 2 }
         return true
     end
 

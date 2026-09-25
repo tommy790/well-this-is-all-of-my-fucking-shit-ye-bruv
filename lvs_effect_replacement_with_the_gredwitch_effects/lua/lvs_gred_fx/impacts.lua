@@ -200,6 +200,50 @@ end
 local throttles = {}
 local throttleCount = 0
 
+--[[---------------------------------------------------------------------------
+    Water spray. LVS fires lvs_hover_water / lvs_physics_water* every tick
+    for every hull or wheel touching water, and each call used to start a
+    whole new gred water system — dozens of live systems per vehicle at
+    speed. Each contact point now owns one slot; a new system starts only
+    once the slot's previous one has finished (CNewParticleEffect:IsFinished),
+    so the density is set by the PCF itself rather than by the call rate.
+-----------------------------------------------------------------------------]]
+local waterSlots = setmetatable({}, { __mode = "k" })   -- ent -> { {pos, psys}, ... }
+local WATER_WORLD_KEY = {}
+local MAX_WATER_SLOTS = 8
+
+local function psysFinished(psys)
+    if not LVS_GRED_FX.PsysValid(psys) then return true end
+    local ok, done = pcall(psys.IsFinished, psys)
+    return not ok or done == true
+end
+
+local function spawnWaterSpray(pcf, ent, pos, ang)
+    local owner = IsValid(ent) and ent or WATER_WORLD_KEY
+    local slots = waterSlots[owner]
+    if not slots then slots = {} waterSlots[owner] = slots end
+
+    local slotDistSqr = (cfg.WaterSlotDist or 48) ^ 2
+    local slot, bestD = nil, slotDistSqr
+    for i = 1, #slots do
+        local d = slots[i].pos:DistToSqr(pos)
+        if d < bestD then slot, bestD = slots[i], d end
+    end
+
+    if not slot then
+        -- New contact point; when the table is full, recycle the oldest slot.
+        slot = (#slots >= MAX_WATER_SLOTS) and table.remove(slots, 1) or {}
+        slots[#slots + 1] = slot
+    end
+    slot.pos = pos
+    if not psysFinished(slot.psys) then return true end   -- still spraying: handled
+
+    local psys = LVS_GRED_FX.SpawnWorld(pcf, pos, ang, nil, false)
+    if not LVS_GRED_FX.PsysValid(psys) then return false end
+    slot.psys = psys
+    return true
+end
+
 local function ThrottleAt(pos, keyName, window)
     if not isvector(pos) then return true end
 
@@ -342,7 +386,7 @@ local function dispatchOneShot(name, self, data)
     end
 
     if cfg.WaterByEffect[name] then
-        return LVS_GRED_FX.SpawnWorldOneShot(cfg.WaterByEffect[name], pos, ang or angle_zero)
+        return spawnWaterSpray(cfg.WaterByEffect[name], data.GetEntity and data:GetEntity() or nil, pos, ang or angle_zero)
     end
 
     if name == "lvs_physics_scrape" or name == "lvs_physics_trackscraping" or name == "lvs_physics_turretscraping" then

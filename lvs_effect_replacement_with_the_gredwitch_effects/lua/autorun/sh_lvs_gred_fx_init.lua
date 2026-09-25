@@ -23,6 +23,7 @@ local CLIENT_FILES = {
     "lvs_gred_fx/barrelsmoke.lua",
     "lvs_gred_fx/impacts.lua",
     "lvs_gred_fx/trails.lua",
+    "lvs_gred_fx/persistent.lua",
     "lvs_gred_fx/bridge.lua",
     "lvs_gred_fx/effect_list.lua",
     "autorun/client/cl_lvs_gred_fx_override.lua",
