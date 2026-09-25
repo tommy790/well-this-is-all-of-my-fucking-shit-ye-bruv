@@ -25,7 +25,7 @@ down, held and let go by actual forces and constraints.
 - Fixed lofting deleting the player's own welds and constraints on the vehicle.
 - Fixed the anchor integrity check stopping after the first spike.
 - Fixed the vehicle jittering while lowering and raising.
-- Fixed the vehicle shaking violently when deployed with no spikes fitted — it is now held at all four corners, the same way planted spikes hold it, instead of by a single pivot at its centre.
+- Fixed the vehicle being thrown around during the airbag stage when deployed with no spikes fitted. The pull-down springs and world anchors now act at the vehicle's spike mounts (the same points the spike case is tuned for) instead of the render-bounds corners near the wheel bottoms, where a ground trace could start inside a slope and leave the pull lopsided; the spring force is shared between the springs that actually found ground; and the anchors capture the pose only once the chassis has come to rest on the springs, as it has by the end of the piston stroke when spikes are fitted.
 - Fixed the vehicle shaking and bouncing after a loft once the tornado was removed — the last wind reading was never cleared, so it kept being pushed by a storm that no longer existed.
 
 **Removed**

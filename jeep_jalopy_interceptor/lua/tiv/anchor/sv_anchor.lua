@@ -107,6 +107,14 @@ local function GroundTraceFilter(veh, data)
     end
 end
 
+-- With no spikes fitted the mounts are still the spike mounts from the
+-- vehicle's layout (TIV.Config.SpikeOffsets), so the springs and the world
+-- sockets act at exactly the points the spike case is tuned for. An earlier
+-- fallback used the render-bounds corners 8 u above the wheel bottoms: that
+-- put the pull points a chassis-height lower and further outboard than any
+-- spike mount, on a level where the ground trace could start inside a slope
+-- and drop a corner, and the lopsided 8x-weight pull that followed is what
+-- threw the vehicle around during the airbag stage.
 local function MountPoints(veh, data)
     local mounts = {}
     for _, sd in ipairs(data.spikes or {}) do
@@ -115,15 +123,36 @@ local function MountPoints(veh, data)
     end
     if #mounts > 0 then return mounts end
 
+    local offsets = TIV.SpikeAnim and TIV.SpikeAnim.GetOffsetsForVehicle and TIV.SpikeAnim.GetOffsetsForVehicle(veh)
+    for _, off in ipairs(offsets or {}) do
+        if isvector(off.pos) then mounts[#mounts + 1] = Vector(off.pos.x, off.pos.y, off.pos.z) end
+    end
+    if #mounts > 0 then return mounts end
+
     local mins, maxs = veh:OBBMins(), veh:OBBMaxs()
-    local z = mins.z + 8
     local ix, iy = (maxs.x - mins.x) * 0.2, (maxs.y - mins.y) * 0.2
     return {
-        Vector(maxs.x - ix, maxs.y - iy, z),
-        Vector(maxs.x - ix, mins.y + iy, z),
-        Vector(mins.x + ix, maxs.y - iy, z),
-        Vector(mins.x + ix, mins.y + iy, z),
+        Vector(maxs.x - ix, maxs.y - iy, 0),
+        Vector(maxs.x - ix, mins.y + iy, 0),
+        Vector(mins.x + ix, maxs.y - iy, 0),
+        Vector(mins.x + ix, mins.y + iy, 0),
     }
+end
+
+-- Ground under a mount. Starts the trace a little above the mount so a
+-- mount that is already touching a slope does not start solid and lose its
+-- spring; a hit above the mount can only be the vehicle itself and is ignored.
+local TRACE_LIFT = 16
+local function GroundUnder(mountWorld, filter)
+    local tr = util.TraceLine({
+        start  = mountWorld + Vector(0, 0, TRACE_LIFT),
+        endpos = mountWorld - Vector(0, 0, 300),
+        filter = filter,
+        mask   = MASK_SOLID,
+    })
+    if not tr.Hit or tr.StartSolid then return nil end
+    if tr.HitPos.z > mountWorld.z + 0.5 then return nil end
+    return tr.HitPos
 end
 
 -- Returns the number of springs created. `lowerAmount` is how far the chassis
@@ -139,32 +168,38 @@ function TIV.Anchor.StartPullDown(veh, data, lowerAmount)
     local mounts = MountPoints(veh, data)
     local filter = GroundTraceFilter(veh, data)
     local mass = VehicleMass(veh)
-    local n = #mounts
     local overshoot = 12
+
+    -- Find the ground first so the per-spring force is shared between the
+    -- springs that actually exist, not the mounts that were asked for.
+    local anchors = {}
+    for _, mountLocal in ipairs(mounts) do
+        local mountWorld = veh:LocalToWorld(mountLocal)
+        local hit = GroundUnder(mountWorld, filter)
+        if hit then
+            anchors[#anchors + 1] = { localPos = mountLocal, hitPos = hit, restLength = mountWorld:Distance(hit) }
+        end
+    end
+
+    data.pullDown = { elastics = {}, startTime = CurTime(), lowerAmount = lowerAmount, overshoot = overshoot }
+    local n = #anchors
+    if n == 0 then return 0 end
+    if n < #mounts then
+        print(string.format("[TIV] #%d pull-down: ground under %d of %d mounts", veh:EntIndex(), n, #mounts))
+    end
+
     -- At full shortening the springs pull with roughly 8x the vehicle weight,
-    -- spread across the mounts.
+    -- spread across the springs.
     local constant = (mass * 600 * 8) / (n * (lowerAmount + overshoot))
     local damping  = (mass * 40) / n
 
-    data.pullDown = { elastics = {}, startTime = CurTime(), lowerAmount = lowerAmount, overshoot = overshoot }
-
-    for _, mountLocal in ipairs(mounts) do
-        local mountWorld = veh:LocalToWorld(mountLocal)
-        local tr = util.TraceLine({
-            start  = mountWorld,
-            endpos = mountWorld - Vector(0, 0, 300),
-            filter = filter,
-            mask   = MASK_SOLID,
-        })
-        if tr.Hit and not tr.StartSolid then
-            local restLen = mountWorld:Distance(tr.HitPos)
-            local el = constraint.Elastic(veh, world, 0, 0, mountLocal, tr.HitPos,
-                constant, damping, 0, "", 0, true)
-            if IsValid(el) then
-                el:Fire("SetSpringLength", tostring(restLen))
-                Track(data, el, nil, "elastic", { restLength = restLen, localPos = mountLocal })
-                data.pullDown.elastics[#data.pullDown.elastics + 1] = { con = el, restLength = restLen }
-            end
+    for _, a in ipairs(anchors) do
+        local el = constraint.Elastic(veh, world, 0, 0, a.localPos, a.hitPos,
+            constant, damping, 0, "", 0, true)
+        if IsValid(el) then
+            el:Fire("SetSpringLength", tostring(a.restLength))
+            Track(data, el, nil, "elastic", { restLength = a.restLength, localPos = a.localPos })
+            data.pullDown.elastics[#data.pullDown.elastics + 1] = { con = el, restLength = a.restLength }
         end
     end
     return #data.pullDown.elastics

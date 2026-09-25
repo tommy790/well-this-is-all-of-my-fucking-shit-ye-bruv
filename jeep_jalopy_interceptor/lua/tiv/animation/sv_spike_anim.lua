@@ -192,6 +192,7 @@ local function GetOffsetsForVehicle(veh)
     end
     return offsets.jeep
 end
+TIV.SpikeAnim.GetOffsetsForVehicle = GetOffsetsForVehicle
 
 local function ResolveOwner(veh)
     local ply = (veh.GetDriver and veh:GetDriver()) or veh._TIVOwner

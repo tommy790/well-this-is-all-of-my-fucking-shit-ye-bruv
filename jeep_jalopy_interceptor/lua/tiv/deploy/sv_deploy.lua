@@ -298,7 +298,24 @@ local function StartSpikeDeploy(veh, data)
     if not IsValid(veh) then return end
     if TIV.Spikes.GetCount(data) == 0 then
         SetState(veh, data, "deploying_spikes")
-        FinalizeAnchored(veh, data)
+        -- With spikes the chassis has the whole piston stroke to come to rest
+        -- on the shortened springs before the sockets capture its pose. With
+        -- none it would be captured mid-bounce, so wait for it to stop.
+        local settleName = "TIV_Settle_" .. veh:EntIndex()
+        local deadline = CurTime() + 2
+        timer.Create(settleName, 0.05, 0, function()
+            if not IsValid(veh) or data.state ~= "deploying_spikes" then
+                timer.Remove(settleName)
+                return
+            end
+            local phys = veh:GetPhysicsObject()
+            local still = not IsValid(phys)
+                or (phys:GetVelocity():Length() < 4 and phys:GetAngleVelocity():Length() < 4)
+            if still or CurTime() >= deadline then
+                timer.Remove(settleName)
+                FinalizeAnchored(veh, data)
+            end
+        end)
         return
     end
     SetState(veh, data, "deploying_spikes")
@@ -553,6 +570,7 @@ hook.Add("EntityRemoved", "TIV_VehicleCleanup", function(ent)
 
     timer.Remove("TIV_Lower_" .. idx)
     timer.Remove("TIV_Raise_" .. idx)
+    timer.Remove("TIV_Settle_" .. idx)
     if ent.SetHandbrake then ReleaseHandbrake(ent) end
     TIV.Anchor.DetachAll(ent, data)
     TIV.Spikes.RemoveAll(data, idx)
