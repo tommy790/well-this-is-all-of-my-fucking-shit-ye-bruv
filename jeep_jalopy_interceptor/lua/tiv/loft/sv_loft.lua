@@ -23,7 +23,7 @@ end
 
 CreateConVar("tiv_loft_release_spikes", "0",
     { FCVAR_ARCHIVE, FCVAR_NOTIFY, FCVAR_REPLICATED },
-    "If 1, spikes fly free as debris on loft. If 0, planted spikes stay in the ground until the post-loft reset.")
+    "If 1, spikes fly free as debris on loft. If 0, they stay parented to the vehicle.")
 
 -- ============================================================================
 -- EXTERNAL TORNADO MOD IMMUNITY HELPERS
@@ -174,20 +174,39 @@ function TIV.Loft.FailSpikeList(veh, data, spikesToFail, duration)
             if sd.failed then return end
             sd.failed = true
 
-            -- The mount shears off the spike. The spike stays planted in the
-            -- ground (its ground weld is kept); the remaining spikes carry the
-            -- load until they go too and the vehicle tears free.
+            -- Sever the hold on this spike first, then let the spike itself
+            -- tear out of the ground as debris.
             TIV.Anchor.BreakSpike(veh, data, spikeIdx)
-            if data.spikeAnims then data.spikeAnims[spikeIdx] = "torn" end
 
             local spikeEnt = sd.entity
             if IsValid(spikeEnt) then
+                spikeEnt:SetMoveType(MOVETYPE_VPHYSICS)
+                local sp = spikeEnt:GetPhysicsObject()
+                if IsValid(sp) then
+                    sp:EnableMotion(true)
+                    sp:EnableGravity(true)
+                    sp:Wake()
+                    sp:ApplyForceCenter((Vector(0, 0, 400) + VectorRand() * 200) * sp:GetMass())
+                end
+                spikeEnt:SetCollisionGroup(COLLISION_GROUP_DEBRIS)
+
                 local sparkFX = EffectData()
-                sparkFX:SetOrigin(veh:LocalToWorld(sd.storedLocalPos or sd.localPos or vector_origin))
+                sparkFX:SetOrigin(spikeEnt:GetPos())
                 sparkFX:SetMagnitude(8)
                 sparkFX:SetScale(3)
                 util.Effect("Sparks", sparkFX)
                 spikeEnt:EmitSound("physics/metal/metal_box_break" .. math.random(1, 2) .. ".wav", 90, math.random(60, 80))
+
+                -- Taken back aboard shortly after; it is still the vehicle's
+                -- piston, it just lost its grip on the ground.
+                timer.Simple(0.4, function()
+                    if not IsValid(veh) or not IsValid(spikeEnt) then return end
+                    if TIV.SpikeAnim and TIV.SpikeAnim.ReparentSpike then
+                        TIV.SpikeAnim.ReparentSpike(veh, spikeEnt, sd)
+                        sd.failed = true
+                    end
+                    if data.spikeAnims then data.spikeAnims[spikeIdx] = "idle" end
+                end)
             end
 
             net.Start("TIV_AnchorWarning")
@@ -313,11 +332,8 @@ function TIV.Loft.TriggerLoft(veh, data)
         TIV.Wind.GetSpeed(veh), CurTime()))
     print("[TIV] ================================")
 
-    -- 1. Sever the hold: ballsockets and airbag springs go. The spikes' own
-    --    ground welds and the chassis nocollides stay so the planted spikes
-    --    remain in the ground and the launching chassis cannot snag on them.
-    TIV.Anchor.ReleaseHold(veh, data)
-    data.anchored = false
+    -- 1. Complete constraint severance: vehicle is fully freed from spikes & world
+    TIV.Anchor.ForceDetach(veh, data)
     timer.Remove("TIV_Lower_" .. entIdx)
     timer.Remove("TIV_Raise_" .. entIdx)
 
@@ -354,15 +370,20 @@ function TIV.Loft.TriggerLoft(veh, data)
         phys:ApplyTorqueCenter(tumble)
     end
 
-    -- 4. The spikes stay where they are: planted ones remain in the ground
-    --    (they were never the thing that failed) until the post-loft reset
-    --    removes them and fresh ones are mounted. Any still stowed in their
-    --    cylinders simply ride along, parented as they are.
-    if ReleaseSpikesOnLoft() and TIV.Spikes.ReleaseAll then
-        TIV.Spikes.ReleaseAll(data)
-    end
-    for _, sd in ipairs(data.spikes or {}) do
-        if sd.phase == "deployed" then sd.failed = true end
+    -- 4. Release or reparent spikes
+    if ReleaseSpikesOnLoft() then
+        if TIV.Spikes.ReleaseAll then
+            TIV.Spikes.ReleaseAll(data)
+        end
+    else
+        for _, sd in ipairs(data.spikes or {}) do
+            if IsValid(sd.entity) and TIV.SpikeAnim and TIV.SpikeAnim.ReparentSpike then
+                TIV.SpikeAnim.ReparentSpike(veh, sd.entity, sd)
+                if data.spikeAnims and sd.index then
+                    data.spikeAnims[sd.index] = "idle"
+                end
+            end
+        end
     end
 
     util.ScreenShake(veh:GetPos(), 25, 15, 3, 800)
