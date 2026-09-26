@@ -176,17 +176,25 @@ hook.Add("Think", "lvs_gred_fx_followers", function()
     end
 end)
 
--- Positions are driven here: after this frame's interpolation and bone
--- setup, immediately before translucent particles are simulated and drawn.
--- Skipped for the skybox pass (the main pass follows and drives them).
-hook.Add("PreDrawTranslucentRenderables", "lvs_gred_fx_followers_pose", function(_, isDrawingSkybox)
-    if isDrawingSkybox then return end
+-- Positions are driven at the start of the render frame (PreRender: after
+-- this frame's entity interpolation, before particle systems are simulated
+-- and anything is drawn) and once more in the translucent pass, so the
+-- simulation that places this frame's particles sees this frame's muzzle
+-- whichever of the two the engine runs first. PATTACH_POINT_FOLLOW reads
+-- the attachment inside the simulation itself, which is the behaviour
+-- being matched. The skybox pass is skipped.
+local function driveAll()
     for i = #FOLLOWERS, 1, -1 do
         local f = FOLLOWERS[i]
         if LVS_GRED_FX.PsysValid(f.psys) then
             driveFollower(f)
         end
     end
+end
+hook.Add("PreRender", "lvs_gred_fx_followers_pose", driveAll)
+hook.Add("PreDrawTranslucentRenderables", "lvs_gred_fx_followers_pose", function(_, isDrawingSkybox)
+    if isDrawingSkybox then return end
+    driveAll()
 end)
 
 local function spawnFollower(name, ent, attID, opts)
