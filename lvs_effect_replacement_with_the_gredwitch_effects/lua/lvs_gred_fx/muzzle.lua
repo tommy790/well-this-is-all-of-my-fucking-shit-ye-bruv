@@ -13,25 +13,29 @@
       turret motion between fire and resolve cancel out. All distance tests
       below run against that frozen reference.
 
-    How the id is chosen (first match wins)
-      0. The attachment(s) the vehicle's own LVS weapon code fires from
-         (weaponcode.lua reads them out of the selected weapon's Attack
-         function), provided the shot's barrel line actually passes through
-         one of them; a multi-barrel set is narrowed the same way. Code
-         that names one shared point and offsets each barrel from it fails
-         this test on purpose and drops to the chain below, which finds the
-         barrel the shot was offset to.
-      1. The attachment id LVS put in the EffectData, if it is close to the
+    How the id is chosen
+      The vehicle's own LVS weapon code is the authority: weaponcode.lua
+      reads the attachment(s) the selected weapon's Attack function fires
+      from. With several (multi-barrel mounts) the barrel whose line passes
+      through the shot origin is taken; if none does, the nearest of them.
+      The single exception is a mount whose code names one shared point and
+      offsets each shot onto a barrel with its own muzzle/barrel attachment
+      right at the shot origin -- that barrel is used.
+
+      Only when the code names nothing does a geometric chain run
+      (first match wins):
+      1. Barrel line: the attachment lying on the line through the origin
+         in the bullet direction; muzzle/barrel names preferred.
+      2. The attachment id LVS put in the EffectData, if it is close to the
          shot origin and no other attachment is clearly closer. (LVS often
          sends a stale base-model id here -- id 1 on the 2S1 is a suspension
          attachment.)
-      2. LVS's own muzzle attachment (ent.TurretBallisticsMuzzleAttachment),
-         if close. If another attachment is clearly closer, that one fired
-         instead -- multi-gun turrets only name one muzzle (BMD-4M: "muzzle"
-         is the autocannon, the cannon fires from a different attachment).
-      3. Nearest attachment whose name contains "muzzle" or "barrel".
-      4. Nearest attachment of any name inside a strict radius.
-      5. Nothing -> id 0; the caller spawns at the world position.
+      3. LVS's own muzzle attachment (ent.TurretBallisticsMuzzleAttachment),
+         if close. If another barrel is clearly closer, that one fired
+         instead -- multi-gun turrets only name one muzzle.
+      4. Nearest attachment whose name contains "muzzle" or "barrel".
+      5. Nearest attachment of any name inside a strict radius.
+      6. Nothing -> id 0; the caller spawns at the world position.
 
     Names come from GetAttachments(); GetAttachment(id) only returns Pos/Ang.
 
@@ -454,57 +458,50 @@ local function resolveImpl(ent, muzzlePos, effectDataAtt, dir, code)
 
     local cache = GetCache(ent)
 
-    -- What the vehicle's weapon configuration says fires from where.
-    if code then
-        local id, info = resolveByWeaponCode(ent, cache, muzzlePos, dir, code)
-        if id > 0 then return id, info end
-    end
-
-    local id, info = resolveGeometric(ent, cache, muzzlePos, effectDataAtt, dir)
-
-    -- The code's attachment missed the barrel-line test (a traversing turret
-    -- puts the client's attachment a few units from where the server fired
-    -- from; the BMD-4M fires its 30mm 12u beside the point its code names).
-    -- It is still the weapon's own point, so the geometric chain may only
-    -- overrule it in a specific case:
-    --   * the code names ONE point: only a muzzle/barrel-named attachment
-    --     sitting right at the shot origin beats it -- that is a twin/quad
-    --     mount whose code names a shared point and offsets each shot to a
-    --     real barrel tip. A nearer non-barrel attachment never wins (BMD-4M:
-    --     the cannon's misnamed "sight" lies on the 30mm's line of fire);
-    --   * the code names several points: the geometric pick must be clearly
-    --     closer to the shot than the nearest of them.
-    -- Otherwise the fallback lands on a different gun altogether (T-35: the
-    -- MG's shot handed to the cannon muzzle 28u away).
+    -- The weapon's own code is the authority on where it fires from. The
+    -- geometric tests below only choose AMONG the points the code names
+    -- (multi-barrel mounts: the barrel whose line passes through the shot),
+    -- and fall back to the nearest of them when the client's attachment has
+    -- drifted off that line (turret traverse lag, or LVS firing a fixed
+    -- offset beside the named point as on the BMD-4M's 30mm). The heuristic
+    -- chain runs only for vehicles whose code names nothing.
     if code and code.ids and #code.ids > 0 then
-        local codeId, codeD = nearestOf(ent, code.ids, muzzlePos, MAX_NAMED_DIST * MAX_NAMED_DIST)
-        if codeId > 0 then
-            local codeDist = math.sqrt(codeD)
-            local overruled
-            if id == 0 or id == codeId or not info.dist then
-                overruled = false
-            elseif #code.ids == 1 then
-                overruled = isMuzzleName(cache.nameById[id]) and info.dist <= CLEARLY_CLOSER
-                    and info.dist <= codeDist - CLEARLY_CLOSER
-            else
-                overruled = info.dist <= codeDist - CLEARLY_CLOSER
-            end
-            if not overruled then
-                local _, cinfo = result(cache, codeId, "weapon_code_near", codeD)
-                cinfo.reader = code.reader
+        local id, info = resolveByWeaponCode(ent, cache, muzzlePos, dir, code)
+        if id == 0 then
+            local codeId, codeD = nearestOf(ent, code.ids, muzzlePos, MAX_NAMED_DIST * MAX_NAMED_DIST)
+            if codeId > 0 then
+                id, info = result(cache, codeId, "weapon_code_near", codeD)
+                info.reader = code.reader
                 if dir then
                     local att = LVS_GRED_FX.GetAttachmentData(ent, codeId)
                     if att then
                         local v = att.Pos - muzzlePos
-                        cinfo.perp = (v - dir * v:Dot(dir)):Length()
+                        info.perp = (v - dir * v:Dot(dir)):Length()
                     end
                 end
-                return codeId, cinfo
             end
         end
+        if id > 0 then
+            -- One exception: a twin/quad mount whose code names a shared
+            -- point and offsets each shot onto a real barrel that has its own
+            -- muzzle/barrel attachment. That attachment sits right at the
+            -- shot origin, clearly nearer than the shared point, and is the
+            -- barrel that fired. Nothing else outranks the code.
+            if cache.named and #cache.named > 0 then
+                local tipId, tipD = nearestOf(ent, cache.named, muzzlePos, CLEARLY_CLOSER * CLEARLY_CLOSER)
+                if tipId > 0 and tipId ~= id and not table.HasValue(code.ids, tipId)
+                and math.sqrt(tipD) <= info.dist - CLEARLY_CLOSER then
+                    local _, tinfo = result(cache, tipId, "weapon_code_barrel_tip", tipD)
+                    tinfo.reader = code.reader
+                    return tipId, tinfo
+                end
+            end
+            return id, info
+        end
+        -- Every code point is out of range of the shot: treat as no code.
     end
 
-    return id, info
+    return resolveGeometric(ent, cache, muzzlePos, effectDataAtt, dir)
 end
 
 local function resolveGeometricImpl(ent, cache, muzzlePos, effectDataAtt, dir)
@@ -614,6 +611,7 @@ end
     Returns: attachmentID, info
       info = {
         method = "weapon_code" | "weapon_code_axis" | "weapon_code_near"
+               | "weapon_code_barrel_tip"
                | "barrel_axis" | "remembered" | "effectdata" | "lvs_muzzle_name"
                | "lvs_muzzle_name_other_barrel" | "named_nearest" | "nearest" | "none",
         dist   = distance from the shot origin (nil for "none"),
