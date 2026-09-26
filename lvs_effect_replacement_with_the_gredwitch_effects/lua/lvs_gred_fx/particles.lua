@@ -105,38 +105,67 @@ end
 
     Returns: psys handle, `true` (spawned via ParticleEffectAttach), or nil.
 -----------------------------------------------------------------------------]]
--- Offset anchors: a hidden clientside entity parented to the vehicle's
--- attachment at a local offset. Used when the weapon's code fires from a
--- point that is not itself an attachment (a barrel offset from a shared
--- "aim" point): the particle follows that exact point through traverse and
--- recoil without any attachment having to exist there.
-local ANCHORS = {}
-local ANCHOR_GRACE = 5
+-- Offset followers. A particle whose control point 0 is driven every frame
+-- to (attachment transform) x (local offset): used when the weapon's code
+-- fires from a point that is not itself an attachment (a barrel offset
+-- from a shared "aim" point). PATTACH_POINT_FOLLOW cannot carry an offset,
+-- and a parented clientside proxy entity is not re-evaluated when the
+-- attachment's bone moves, so the point is computed here from the live
+-- attachment each frame, exactly as the vehicle's own bones move it.
+local FOLLOWERS = {}
+local FOLLOW_GRACE = 5
 
-local function makeAnchor(ent, attID, offset, offsetAng, life)
-    local anchor = ClientsideModel("models/error.mdl", RENDERGROUP_OTHER)
-    if not IsValid(anchor) then return nil end
-    anchor:SetNoDraw(true)
-    anchor:DrawShadow(false)
-    anchor:SetParent(ent, attID)
-    anchor:SetLocalPos(offset)
-    anchor:SetLocalAngles(isangle(offsetAng) and offsetAng or angle_zero)
-    ANCHORS[#ANCHORS + 1] = { ent = anchor, veh = ent, until_ = CurTime() + (life or 1) + ANCHOR_GRACE }
-    return anchor
+local function followerPose(f)
+    local ent = f.ent
+    if not IsValid(ent) then return nil end
+    if ent.SetupBones then ent:SetupBones() end
+    local a = ent:GetAttachment(f.att)
+    if not a or not isvector(a.Pos) then return nil end
+    return LocalToWorld(f.offset, f.offsetAng, a.Pos, a.Ang)
 end
 
-hook.Add("Think", "lvs_gred_fx_anchors", function()
+hook.Add("Think", "lvs_gred_fx_followers", function()
     local now = CurTime()
-    for i = #ANCHORS, 1, -1 do
-        local a = ANCHORS[i]
-        local dead = now >= a.until_ or not IsValid(a.veh)
-            or (a.psys and not (LVS_GRED_FX.PsysValid(a.psys) and not a.psys:IsFinished()))
-        if dead then
-            if IsValid(a.ent) then a.ent:Remove() end
-            table.remove(ANCHORS, i)
+    for i = #FOLLOWERS, 1, -1 do
+        local f = FOLLOWERS[i]
+        local alive = now < f.until_ and LVS_GRED_FX.PsysValid(f.psys) and not f.psys:IsFinished()
+        local pos, ang
+        if alive then pos, ang = followerPose(f) end
+        if not pos then
+            if LVS_GRED_FX.PsysValid(f.psys) then pcall(f.psys.StopEmission, f.psys, false, true) end
+            table.remove(FOLLOWERS, i)
+        else
+            f.psys:SetControlPoint(0, pos)
+            if f.roll then ang:RotateAroundAxis(ang:Forward(), f.roll) end
+            f.psys:SetControlPointOrientation(0, ang:Forward(), ang:Right(), ang:Up())
         end
     end
 end)
+
+local function spawnFollower(name, ent, attID, opts)
+    local f = {
+        ent = ent, att = attID,
+        offset = opts.offset,
+        offsetAng = isangle(opts.offsetAng) and opts.offsetAng or angle_zero,
+        roll = opts.roll,
+        until_ = CurTime() + (opts.life or 1) + FOLLOW_GRACE,
+    }
+    local pos, ang = followerPose(f)
+    if not pos then return nil end
+    local ok, psys = pcall(CreateParticleSystem, ent, name, PATTACH_CUSTOMORIGIN, 0, pos)
+    if not ok or not LVS_GRED_FX.PsysValid(psys) then return nil end
+    f.psys = psys
+    psys:SetControlPoint(0, pos)
+    if f.roll then ang:RotateAroundAxis(ang:Forward(), f.roll) end
+    psys:SetControlPointOrientation(0, ang:Forward(), ang:Right(), ang:Up())
+    FOLLOWERS[#FOLLOWERS + 1] = f
+    if opts.life then LVS_GRED_FX.StopAfter(psys, opts.life, opts.clear) end
+    if cfg.DebugEnabled() then
+        Debug("attachment + code offset:", name, "ent:", ent:GetClass(), "att:", attID,
+            "name:", LVS_GRED_FX.AttachmentName(ent, attID), "offset:", tostring(opts.offset))
+    end
+    return psys
+end
 
 function LVS_GRED_FX.SpawnAttached(name, ent, attID, opts)
     if not cfg.Enabled() or not isstring(name) then return nil end
@@ -147,19 +176,13 @@ function LVS_GRED_FX.SpawnAttached(name, ent, attID, opts)
 
     opts = opts or {}
 
-    local host, mode, point = ent, PPF, attID
     if isvector(opts.offset) then
-        local anchor = makeAnchor(ent, attID, opts.offset, opts.offsetAng, opts.life)
-        if IsValid(anchor) then
-            host, mode, point = anchor, PATTACH_ABSORIGIN_FOLLOW, 0
-        end
+        local psys = spawnFollower(name, ent, attID, opts)
+        if psys then return psys end
+        -- Could not drive the point: attach to the attachment itself below.
     end
 
-    local ok, psys = pcall(CreateParticleSystem, host, name, mode, point, vector_origin)
-    if host ~= ent then
-        local rec = ANCHORS[#ANCHORS]
-        if rec and rec.ent == host then rec.psys = (ok and psys) or nil end
-    end
+    local ok, psys = pcall(CreateParticleSystem, ent, name, PPF, attID, vector_origin)
 
     -- The particle system handle is not an entity; validate it directly (see
     -- SpawnWorld for details).
@@ -177,9 +200,8 @@ function LVS_GRED_FX.SpawnAttached(name, ent, attID, opts)
         end
 
         if cfg.DebugEnabled() then
-            Debug(host == ent and "PATTACH_POINT_FOLLOW:" or "attachment + code offset:", name,
-                "ent:", ent:GetClass(), "att:", attID, "name:", LVS_GRED_FX.AttachmentName(ent, attID),
-                host ~= ent and ("offset: " .. tostring(opts.offset)) or "")
+            Debug("PATTACH_POINT_FOLLOW:", name, "ent:", ent:GetClass(),
+                "att:", attID, "name:", LVS_GRED_FX.AttachmentName(ent, attID))
         end
 
         return psys
@@ -193,7 +215,7 @@ function LVS_GRED_FX.SpawnAttached(name, ent, attID, opts)
         return nil
     end
 
-    local okAttach = pcall(ParticleEffectAttach, name, mode, host, point)
+    local okAttach = pcall(ParticleEffectAttach, name, PPF, ent, attID)
 
     if okAttach then
         return true
