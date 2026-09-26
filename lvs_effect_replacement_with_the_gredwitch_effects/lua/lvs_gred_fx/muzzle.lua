@@ -48,7 +48,7 @@ if not CLIENT then return end
 local cfg = LVS_GRED_FX.Config
 
 -- Printed in the pose diagnostics so a log can be matched to the code.
-LVS_GRED_FX.MUZZLE_BUILD = "pose-from-render-2"
+LVS_GRED_FX.MUZZLE_BUILD = "pose-from-render-3"
 
 -- Code point acceptance window (units). LVS fires from the attachment
 -- position itself; recoil moves the origin a few units back along the bore.
@@ -553,7 +553,7 @@ local function frameOffset(muzzlePos, dir, framePos, frameAng)
     return lpos, lang
 end
 
-local function resolveImpl(ent, muzzlePos, dir, code, frameEnt, stepLocal)
+local function resolveImpl(ent, muzzlePos, dir, code, frameEnt, stepLocal, turretGun)
     if cfg.DebugEnabled() and debugoverlay and debugoverlay.Box then
         local boxPos = (ent == ACTIVE_VEH) and ent:LocalToWorld(muzzlePos - REF_ORIGIN) or muzzlePos
         debugoverlay.Box(boxPos, Vector(4, 4, 4), 0.5, Color(0, 100, 255, 60))
@@ -598,6 +598,27 @@ local function resolveImpl(ent, muzzlePos, dir, code, frameEnt, stepLocal)
         -- Every code point is out of range of this shot: the entity frame.
     end
 
+    -- The turret-ballistics gun with code that fires from a fixed hull
+    -- vector (Pz.I Bison: the origin is the muzzle's rest position, so LVS's
+    -- own flash does not recoil either). The model's attachment on the
+    -- shot's bore line sits on the gun bone and does recoil; for this one
+    -- gun's effect that is the frame. Nothing else reaches this branch.
+    if turretGun and dir then
+        local id, perp = resolveByAxis(ent, cache, muzzlePos, dir)
+        if id > 0 then
+            local att = LVS_GRED_FX.GetAttachmentData(ent, id)
+            if att then
+                local _, info = result(cache, id, "turret_bore_line", att.Pos:DistToSqr(muzzlePos))
+                info.perp, info.reader = perp, "model"
+                info.offset, info.offsetAng = frameOffset(muzzlePos, dir, att.Pos, att.Ang)
+                info.offsetShot = info.offset
+                local stepAtt = WorldToLocal(att.Pos + (stepLocal or vector_origin), angle_zero, att.Pos, att.Ang)
+                info.offset = steadyOffset(ent, id, { weaponId = "ballistics" }, info.offset, stepAtt, att)
+                return id, info
+            end
+        end
+    end
+
     -- Preset weapons: fired from a fixed local vector on the firing entity.
     -- On the reference the hull sits at REF_ORIGIN with zero angles, which
     -- is that entity's own frame when it is the vehicle; a gunner pod (its
@@ -610,7 +631,7 @@ local function resolveImpl(ent, muzzlePos, dir, code, frameEnt, stepLocal)
     return 0, info
 end
 
-local function resolveOnReference(ent, muzzlePos, dir, code, frameEnt, srcLocal, stepLocal)
+local function resolveOnReference(ent, muzzlePos, dir, code, frameEnt, srcLocal, stepLocal, turretGun)
     local now = CurTime()
     local shotId = ent._lvsGredShotId
     if not shotId or now - (ent._lvsGredShotTime or 0) > SHOT_WINDOW then
@@ -637,7 +658,7 @@ local function resolveOnReference(ent, muzzlePos, dir, code, frameEnt, srcLocal,
         refPos, refTip = toReferenceSpace(ent, ref, muzzlePos, dir and (muzzlePos + dir * 16) or nil)
         refDir = refTip and (refTip - refPos):GetNormalized() or nil
     end
-    local ok, id, info = pcall(resolveImpl, ent, refPos, refDir, code, frameEnt, stepLocal)
+    local ok, id, info = pcall(resolveImpl, ent, refPos, refDir, code, frameEnt, stepLocal, turretGun)
     ACTIVE_REF, ACTIVE_VEH = nil, nil
     if not ok then return nil end
     if code and info and not info.reader then
@@ -657,7 +678,9 @@ end
     Returns attachment id (0 = none) and an info table:
         method    = "weapon_code" | "weapon_code_axis" | "weapon_code_near"
                   | "weapon_code_offset" (origin more than a few units from
-                    the attachment) | "entity_frame"
+                    the attachment) | "turret_bore_line" (howitzer whose code
+                    fires from a fixed hull vector: the model's attachment on
+                    the bore line) | "entity_frame"
         offset    = Vector, origin in the frame's local space (always set
                     when a fire direction is known)
         offsetAng = Angle,  shot direction in that space
@@ -734,11 +757,11 @@ function LVS_GRED_FX.ResolveMuzzleAttachment(ent, muzzlePos, effectDataAtt, gunK
     -- firing entity's own.
     local frameEnt = isvector(srcLocal) and ent or weaponHolder
 
-    local id, info = resolveOnReference(ent, muzzlePos, dir, code, frameEnt, srcLocal, stepLocal)
+    local id, info = resolveOnReference(ent, muzzlePos, dir, code, frameEnt, srcLocal, stepLocal, turretGun)
     if id == nil then
         local livePos, liveTip = compensateHullMotion(ent, muzzlePos, dir and (muzzlePos + dir * 16) or nil)
         local liveDir = liveTip and (liveTip - livePos):GetNormalized() or nil
-        id, info = resolveImpl(ent, livePos, liveDir, code, frameEnt, stepLocal)
+        id, info = resolveImpl(ent, livePos, liveDir, code, frameEnt, stepLocal, turretGun)
     end
 
     if id == 0 and info and info.method == "entity_frame" then
