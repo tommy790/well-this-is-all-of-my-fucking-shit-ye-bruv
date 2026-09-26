@@ -102,6 +102,10 @@ end
       forceHandle → only use CreateParticleSystem; return nil instead of
                     falling back to handle-less ParticleEffectAttach (used by
                     systems that must track/stop the system, e.g. barrel smoke)
+      offset/offsetAng → origin in the frame's local space: the particle is
+                    driven from the live attachment (attID > 0) or from
+                    frameEnt's transform (attID == 0) every frame
+      frameEnt    → entity whose transform is the frame when attID == 0
 
     Returns: psys handle, `true` (spawned via ParticleEffectAttach), or nil.
 -----------------------------------------------------------------------------]]
@@ -118,10 +122,14 @@ local FOLLOW_GRACE = 5
 local function followerPose(f)
     local ent = f.ent
     if not IsValid(ent) then return nil end
-    if ent.SetupBones then ent:SetupBones() end
-    local a = ent:GetAttachment(f.att)
-    if not a or not isvector(a.Pos) then return nil end
-    return LocalToWorld(f.offset, f.offsetAng, a.Pos, a.Ang)
+    if f.att > 0 then
+        if ent.SetupBones then ent:SetupBones() end
+        local a = ent:GetAttachment(f.att)
+        if not a or not isvector(a.Pos) then return nil end
+        return LocalToWorld(f.offset, f.offsetAng, a.Pos, a.Ang)
+    end
+    -- Entity frame (preset weapons fire from a fixed local vector).
+    return LocalToWorld(f.offset, f.offsetAng, ent:GetPos(), ent:GetAngles())
 end
 
 hook.Add("Think", "lvs_gred_fx_followers", function()
@@ -144,7 +152,8 @@ end)
 
 local function spawnFollower(name, ent, attID, opts)
     local f = {
-        ent = ent, att = attID,
+        ent = (attID == 0 and IsValid(opts.frameEnt)) and opts.frameEnt or ent,
+        att = attID or 0,
         offset = opts.offset,
         offsetAng = isangle(opts.offsetAng) and opts.offsetAng or angle_zero,
         roll = opts.roll,
@@ -161,26 +170,31 @@ local function spawnFollower(name, ent, attID, opts)
     FOLLOWERS[#FOLLOWERS + 1] = f
     if opts.life then LVS_GRED_FX.StopAfter(psys, opts.life, opts.clear) end
     if cfg.DebugEnabled() then
-        Debug("attachment + code offset:", name, "ent:", ent:GetClass(), "att:", attID,
-            "name:", LVS_GRED_FX.AttachmentName(ent, attID), "offset:", tostring(opts.offset))
+        Debug(f.att > 0 and "follow attachment + offset:" or "follow entity frame:", name,
+            "ent:", f.ent:GetClass(), "att:", f.att,
+            "name:", f.att > 0 and LVS_GRED_FX.AttachmentName(ent, f.att) or "-",
+            "offset:", tostring(opts.offset))
     end
     return psys
 end
 
 function LVS_GRED_FX.SpawnAttached(name, ent, attID, opts)
     if not cfg.Enabled() or not isstring(name) then return nil end
-    if not IsValid(ent) or not attID or attID <= 0 then return nil end
+    if not IsValid(ent) then return nil end
+    opts = opts or {}
+    attID = attID or 0
+
+    if isvector(opts.offset) then
+        if not LVS_GRED_FX.Preload(name) then return nil end
+        local psys = spawnFollower(name, ent, attID, opts)
+        if psys or attID <= 0 then return psys end
+        -- Could not drive the point: attach to the attachment itself below.
+    end
+
+    if attID <= 0 then return nil end
     if not LVS_GRED_FX.Preload(name) then return nil end
     if not ent.GetAttachment then return nil end
     if not ent:GetAttachment(attID) then return nil end
-
-    opts = opts or {}
-
-    if isvector(opts.offset) then
-        local psys = spawnFollower(name, ent, attID, opts)
-        if psys then return psys end
-        -- Could not drive the point: attach to the attachment itself below.
-    end
 
     local ok, psys = pcall(CreateParticleSystem, ent, name, PPF, attID, vector_origin)
 

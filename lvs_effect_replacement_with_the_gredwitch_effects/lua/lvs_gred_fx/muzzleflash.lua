@@ -72,14 +72,16 @@ local function spawnFlash(pcf, ent, muzzlePos, ang, att, life, place)
 
     local roll = LVS_GRED_FX.GetMuzzleRollFix(pcf, ent)
 
-    if att and att > 0 and LVS_GRED_FX.ValidAttachment(ent, att) then
+    local hasOffset = place and isvector(place.offset)
+    if hasOffset or (att and att > 0 and LVS_GRED_FX.ValidAttachment(ent, att)) then
         local ok = LVS_GRED_FX.SpawnAttached(pcf, ent, att, {
             life = life,
             clear = true,
             ang = ang,
             roll = roll,
-            offset = place and place.offset or nil,
-            offsetAng = place and place.offsetAng or nil,
+            offset = hasOffset and place.offset or nil,
+            offsetAng = hasOffset and place.offsetAng or nil,
+            frameEnt = place and place.frameEnt or nil,
         })
         if ok then
             if cfg.DebugEnabled() then
@@ -91,15 +93,11 @@ local function spawnFlash(pcf, ent, muzzlePos, ang, att, life, place)
         end
     end
 
-    -- No usable attachment: world-position fallback (documented last resort).
+    -- Neither frame could be driven (entity gone between fire and resolve).
     if cfg.DebugEnabled() then
-        Debug("muzzle flash world fallback:", pcf,
-            "pos:", tostring(muzzlePos),
-            "reason: no valid attachment",
-            "att:", tostring(att))
+        Debug("muzzle flash not spawned:", pcf, "pos:", tostring(muzzlePos), "att:", tostring(att))
     end
-
-    return LVS_GRED_FX.SpawnWorld(pcf, muzzlePos, ang, life, true) ~= nil
+    return false
 end
 
 -- Spawn the full artillery muzzle flash: a single gred artillery blast
@@ -294,5 +292,5 @@ function LVS_GRED_FX_MUZZLEFLASH.SpawnGeneric(effectName, self, data)
             "method:", info and info.method, "dist:", info and info.dist)
     end
 
-    return spawnGenericMuzzle(rootEnt, muzzlePos, ang, att)
+    return spawnGenericMuzzle(rootEnt, muzzlePos, ang, att, info)
 end

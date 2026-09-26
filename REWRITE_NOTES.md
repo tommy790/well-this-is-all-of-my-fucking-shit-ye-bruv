@@ -90,10 +90,12 @@ stacking wrappers; particle systems used after being freed (crash on map change)
 `sv_tracer` with it; patching is now idempotent via a marker on the original function.
 
 **Later changes (in-game testing):**
-- Muzzle attachment resolver: the weapon → attachment relationship is read from the
-  vehicle's own LVS weapon code (`weaponcode.lua`, source or bytecode) and accepted only
-  when the attachment lies on the shot's barrel line, so twin/quad guns flash from the
-  right barrel; geometric barrel-axis matching is the fallback, never name guessing.
+- Muzzle placement: the shot origin is the weapon code's own output and is expressed in
+  one of two exact frames, driven per frame (`particles.lua` followers): the attachment
+  the weapon's code fires relative to (`weaponcode.lua` reads it from the Attack function;
+  among several, the one whose bore line passes through the shot) or, for presets that
+  name none, the firing entity's transform. No attachment search, memory or world
+  fallback remains.
 - Persistent LVS effects (ammo-rack fire, defence smoke) are one particle system each,
   kept alive exactly as long as LVS keeps sending the effect (`persistent.lua`).
 - Tracers: `particles/lvs_gred_tracers.pcf`, generated from gred's tracer definitions

@@ -97,31 +97,31 @@ function LVS_GRED_FX_BARRELSMOKE.Spawn(ent, muzzlePos, att, pcf, place)
         byPcf[pcf] = nil
     end
 
-    -- Resolve the muzzle attachment independently of the flash system.
-    local smokeAtt = att
-    if not smokeAtt or smokeAtt <= 0 then
-        smokeAtt = LVS_GRED_FX.ResolveMuzzleAttachment(ent, muzzlePos, 0)
+    -- Same frame as the flash (resolved once by the caller).
+    local smokeAtt = att or 0
+    if not place and smokeAtt <= 0 then
+        smokeAtt, place = LVS_GRED_FX.ResolveMuzzleAttachment(ent, muzzlePos, 0)
     end
+    local hasOffset = place and isvector(place.offset)
 
     local psys
-    if smokeAtt and smokeAtt > 0 and LVS_GRED_FX.ValidAttachment(ent, smokeAtt) then
+    if hasOffset or (smokeAtt > 0 and LVS_GRED_FX.ValidAttachment(ent, smokeAtt)) then
         -- forceHandle: smoke must be trackable so we can replace it later.
         psys = LVS_GRED_FX.SpawnAttached(pcf, ent, smokeAtt, {
             life = life,
             clear = false,
             forceHandle = true,
-            offset = place and place.offset or nil,
-            offsetAng = place and place.offsetAng or nil,
+            offset = hasOffset and place.offset or nil,
+            offsetAng = hasOffset and place.offsetAng or nil,
+            frameEnt = place and place.frameEnt or nil,
         })
     end
 
     if not psys then
         if cfg.DebugEnabled() then
-            Debug("barrel smoke world fallback:", pcf,
-                "pos:", tostring(muzzlePos),
-                "reason: no valid attachment", "att:", tostring(smokeAtt))
+            Debug("barrel smoke not spawned:", pcf, "pos:", tostring(muzzlePos), "att:", tostring(smokeAtt))
         end
-        psys = LVS_GRED_FX.SpawnWorld(pcf, muzzlePos, angle_zero, life, false)
+        return
     end
 
     if PsysValid(psys) then
