@@ -20,7 +20,7 @@
       through the shot origin is taken; if none does, the nearest of them.
       The single exception is a mount whose code names one shared point and
       offsets each shot onto a barrel with its own muzzle/barrel attachment
-      right at the shot origin -- that barrel is used.
+      lying on the shot's barrel line -- that barrel is used.
 
       Only when the code names nothing does a geometric chain run
       (first match wins):
@@ -483,17 +483,29 @@ local function resolveImpl(ent, muzzlePos, effectDataAtt, dir, code)
         end
         if id > 0 then
             -- One exception: a twin/quad mount whose code names a shared
-            -- point and offsets each shot onto a real barrel that has its own
-            -- muzzle/barrel attachment. That attachment sits right at the
-            -- shot origin, clearly nearer than the shared point, and is the
-            -- barrel that fired. Nothing else outranks the code.
-            if cache.named and #cache.named > 0 then
-                local tipId, tipD = nearestOf(ent, cache.named, muzzlePos, CLEARLY_CLOSER * CLEARLY_CLOSER)
-                if tipId > 0 and tipId ~= id and not table.HasValue(code.ids, tipId)
-                and math.sqrt(tipD) <= info.dist - CLEARLY_CLOSER then
-                    local _, tinfo = result(cache, tipId, "weapon_code_barrel_tip", tipD)
-                    tinfo.reader = code.reader
-                    return tipId, tinfo
+            -- point (Pz.IV Zerstörer: "aim", 18u from every barrel) and
+            -- offsets each shot onto a real barrel that has its own
+            -- muzzle/barrel attachment. That attachment lies on the shot's
+            -- barrel line (a recoiled origin sits a few units behind it, so
+            -- the line test, not plain distance) while the shared point does
+            -- not, and it is the barrel that fired. Only muzzle/barrel-named
+            -- attachments outside the code's own set qualify; a sight or aim
+            -- point never does.
+            if dir and info.method == "weapon_code_near" and cache.named and #cache.named > 0 then
+                local tips = {}
+                for i = 1, #cache.named do
+                    local nid = cache.named[i]
+                    if not table.HasValue(code.ids, nid) then tips[#tips + 1] = nid end
+                end
+                if #tips > 0 then
+                    local tipId, tipPerp = resolveByAxis(ent, cache, muzzlePos, dir, tips)
+                    if tipId > 0 then
+                        local att = LVS_GRED_FX.GetAttachmentData(ent, tipId)
+                        local _, tinfo = result(cache, tipId, "weapon_code_barrel_tip",
+                            att and att.Pos:DistToSqr(muzzlePos) or 0)
+                        tinfo.perp, tinfo.reader = tipPerp, code.reader
+                        return tipId, tinfo
+                    end
                 end
             end
             return id, info
