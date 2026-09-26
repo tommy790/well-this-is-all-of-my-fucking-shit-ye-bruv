@@ -473,7 +473,9 @@ end
 --    shots fired with the mount at rest -- attachment not moved in hull
 --    space since the previous shot -- update the gun's steady offset, and
 --    that steady value is what is applied while it moves. Before any calm
---    shot exists the raw offset is used.
+--    shot exists the flash sits on the attachment itself (offset zero):
+--    that is what the weapon code says, and nothing measured yet says
+--    otherwise.
 --  * Staleness. Some LVS fire paths build the origin from a server
 --    attachment position that is one tick old (T-35 turret: the offset grew
 --    with speed and one tick of hull velocity removed it); others do not
@@ -527,9 +529,14 @@ local function steadyOffset(ent, id, code, rawOffset, stepOffset, att)
         rec.samples[#rec.samples + 1] = { raw = rawOffset, step = stepOffset }
         if #rec.samples > STEADY_SAMPLES then table.remove(rec.samples, 1) end
     end
+    -- No shot with the mount at rest yet (a pintle MG on a bouncing jeep may
+    -- never be still): the weapon code says the gun fires from this
+    -- attachment, and nothing measured contradicts it, so the flash goes on
+    -- the attachment. A constant offset is applied once it has been seen at
+    -- rest.
     if #rec.samples == 0 then
         LAST_TICK_K, LAST_TICK_COMP = 0, 0
-        return rawOffset
+        return vector_origin
     end
 
     local m0, m1 = medianOffset(rec.samples, 0), medianOffset(rec.samples, 1)
