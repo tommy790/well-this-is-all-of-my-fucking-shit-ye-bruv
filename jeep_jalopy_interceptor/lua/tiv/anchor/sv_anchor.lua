@@ -170,6 +170,14 @@ function TIV.Anchor.StartPullDown(veh, data, lowerAmount)
     local mass = VehicleMass(veh)
     local overshoot = 12
 
+    -- The spring's ground end sits below the surface by the full stroke plus
+    -- a margin. A spring is only ever shortened by lowerAmount + overshoot,
+    -- so its length can never be asked to go below the margin no matter how
+    -- close the mount is to the ground; with the end on the surface itself a
+    -- mount at ground level (the spike mounts sit at the chassis origin) left
+    -- nothing to shorten and the vehicle barely moved.
+    local anchorDepth = lowerAmount + overshoot + 8
+
     -- Find the ground first so the per-spring force is shared between the
     -- springs that actually exist, not the mounts that were asked for.
     local anchors = {}
@@ -177,7 +185,8 @@ function TIV.Anchor.StartPullDown(veh, data, lowerAmount)
         local mountWorld = veh:LocalToWorld(mountLocal)
         local hit = GroundUnder(mountWorld, filter)
         if hit then
-            anchors[#anchors + 1] = { localPos = mountLocal, hitPos = hit, restLength = mountWorld:Distance(hit) }
+            local anchorPos = hit - Vector(0, 0, anchorDepth)
+            anchors[#anchors + 1] = { localPos = mountLocal, hitPos = anchorPos, restLength = mountWorld:Distance(anchorPos) }
         end
     end
 
@@ -186,6 +195,12 @@ function TIV.Anchor.StartPullDown(veh, data, lowerAmount)
     if n == 0 then return 0 end
     if n < #mounts then
         print(string.format("[TIV] #%d pull-down: ground under %d of %d mounts", veh:EntIndex(), n, #mounts))
+    end
+    if GetConVar("tiv_debug_freeze") and GetConVar("tiv_debug_freeze"):GetBool() then
+        for i, a in ipairs(anchors) do
+            print(string.format("[TIV] #%d spring %d: mount (%.0f %.0f %.0f) rest %.1f u, will shorten by %.1f u",
+                veh:EntIndex(), i, a.localPos.x, a.localPos.y, a.localPos.z, a.restLength, lowerAmount + overshoot))
+        end
     end
 
     -- At full shortening the springs pull with roughly 8x the vehicle weight,
