@@ -205,7 +205,8 @@ spawnResolved = function(effectName, ent, muzzlePos, normal, dataAtt)
             "name:", info and info.name or "?",
             "reader:", info and info.reader or "-",
             "code-named:", info and info.code or "-",
-            "motion:", string.format("%.1f", LVS_GRED_FX.LastMotionCompensation and LVS_GRED_FX.LastMotionCompensation() or 0))
+            "motion:", string.format("%.1f", LVS_GRED_FX.LastMotionCompensation and LVS_GRED_FX.LastMotionCompensation() or 0),
+            "tick comp:", string.format("%.1f", LVS_GRED_FX.LastTickCompensation and LVS_GRED_FX.LastTickCompensation() or 0))
     end
 
     local isArtillery = effectName == "lvs_haubitze_muzzle"

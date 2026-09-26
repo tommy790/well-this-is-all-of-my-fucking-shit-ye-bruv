@@ -570,10 +570,30 @@ end
     LVS's EffectData attachment id is unreliable and nothing is remembered
     between shots because nothing is estimated.
 -----------------------------------------------------------------------------]]
+-- LVS computes the shot origin on the server from an attachment position,
+-- and Source's server-side attachment positions come from the bone setup
+-- of the previous tick while WorldToLocal uses the current origin. On a
+-- moving vehicle the local origin therefore lands one tick of travel
+-- BEHIND the gun, along the hull's velocity (T-35 at ~240 u/s: 4 u, the
+-- direction fixed in the world while the turret turns). Moving it forward
+-- by one tick of the hull's velocity, in hull space, removes that.
+local LAST_TICK_COMP = 0
+local function tickCompensate(veh, srcLocal)
+    LAST_TICK_COMP = 0
+    local vel = veh:GetVelocity()
+    if not isvector(vel) or vel:LengthSqr() < 1 then return srcLocal end
+    local step = vel * engine.TickInterval()
+    local localStep = veh:WorldToLocal(veh:GetPos() + step)
+    LAST_TICK_COMP = localStep:Length()
+    return srcLocal + localStep
+end
+function LVS_GRED_FX.LastTickCompensation() return LAST_TICK_COMP end
+
 function LVS_GRED_FX.ResolveMuzzleAttachment(ent, muzzlePos, effectDataAtt, gunKey, dir, weaponEnt, srcLocal)
     if not IsValid(ent) then return 0, { method = "none", reason = "invalid entity" } end
     if not isvector(muzzlePos) then return 0, { method = "none", reason = "invalid muzzle position" } end
     if isvector(dir) and dir:LengthSqr() > 0.0001 then dir = dir:GetNormalized() else dir = nil end
+    if isvector(srcLocal) then srcLocal = tickCompensate(ent, srcLocal) end
 
     -- The entity LVS fired the effect on (gunner pod or the vehicle itself)
     -- carries the selected weapon; `ent` is the root the attachments live on.
