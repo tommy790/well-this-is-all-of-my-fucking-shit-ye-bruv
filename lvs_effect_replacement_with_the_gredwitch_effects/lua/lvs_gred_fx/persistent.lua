@@ -166,17 +166,26 @@ function P.SmokeScreen(name, self, data)
         src.pos = pos
         if LVS_GRED_FX.PsysValid(src.psys) and not src.psys:IsFinished() then
             src.psys:SetControlPoint(0, pos)
+            LVS_GRED_FX.DebugOnce("smoke:live", "smoke canister: live system moved to", tostring(pos),
+                "age:", string.format("%.1f", now - src.started))
             return true
         end
         -- Ran its course while LVS is still calling: start it again here.
+        LVS_GRED_FX.DebugOnce("smoke:restart", "smoke canister: system finished, restarting")
         stopSource(bestKey, src)
     end
 
     local pcf = cfg.SmokeScreenPcf
-    if not LVS_GRED_FX.Preload(pcf) then return false end
+    if not LVS_GRED_FX.Preload(pcf) then
+        LVS_GRED_FX.DebugOnce("smoke:nopcf", "smoke canister: particle not available:", pcf)
+        return false
+    end
 
     local psys = LVS_GRED_FX.SpawnWorld(pcf, pos, angle_zero, nil, false)
-    if not LVS_GRED_FX.PsysValid(psys) then return false end
+    if not LVS_GRED_FX.PsysValid(psys) then
+        LVS_GRED_FX.DebugOnce("smoke:nospawn", "smoke canister: spawn failed:", pcf)
+        return false
+    end
 
     local key = "smoke:" .. tostring(now) .. ":" .. tostring(pos)
     P.Active[key] = {
