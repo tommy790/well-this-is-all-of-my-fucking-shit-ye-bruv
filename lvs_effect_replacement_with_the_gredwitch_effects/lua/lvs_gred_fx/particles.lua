@@ -127,74 +127,83 @@ function LVS_GRED_FX.LockedVariant(name)
     return LOCKED[name] or name
 end
 
--- Offset followers. A particle whose control point 0 is driven every frame
--- to (attachment transform) x (local offset): used when the weapon's code
--- fires from a point that is not itself an attachment (a barrel offset
--- from a shared "aim" point). PATTACH_POINT_FOLLOW cannot carry an offset,
--- and a parented clientside proxy entity is not re-evaluated when the
--- attachment's bone moves, so the point is computed here from the live
--- attachment each frame, exactly as the vehicle's own bones move it.
+-- Offset followers.
+--
+-- Why a proxy entity and not a Lua-driven control point: the engine updates
+-- attachment-followed particles inside its own simulation step, later than
+-- any Lua hook runs, so a control point set from Lua is a frame behind --
+-- measured as a visible trail at 800 u/s, while PATTACH_POINT_FOLLOW on
+-- the same attachment was clean. PATTACH_POINT_FOLLOW cannot carry an
+-- offset and orients by the attachment's own axis, so instead a hidden
+-- clientside entity is parented to the vehicle ROOT (a plain parent: a
+-- proxy parented to an attachment is not re-evaluated with bone motion)
+-- and the particle follows that proxy with PATTACH_ABSORIGIN_FOLLOW. The
+-- engine composes the proxy's world transform from the hull's current
+-- transform in its own update, so hull motion is engine-timed and exact;
+-- Lua only sets the proxy's LOCAL pose each frame -- the attachment's
+-- hull-space transform plus the code offset, oriented by the shot -- and
+-- turret/gun motion between frames is sub-unit.
 local FOLLOWERS = {}
 local FOLLOW_GRACE = 5
 
-local function followerPose(f)
+-- Desired point in the parent's local space.
+local function followerLocalPose(f)
     local ent = f.ent
     if not IsValid(ent) then return nil end
     if f.att > 0 then
         if ent.SetupBones then ent:SetupBones() end
         local a = ent:GetAttachment(f.att)
         if not a or not isvector(a.Pos) then return nil end
-        return LocalToWorld(f.offset, f.offsetAng, a.Pos, a.Ang)
+        local attLocalPos = ent:WorldToLocal(a.Pos)
+        local attLocalAng = ent:WorldToLocalAngles(a.Ang)
+        return LocalToWorld(f.offset, f.offsetAng, attLocalPos, attLocalAng)
     end
-    -- Entity frame (preset weapons fire from a fixed local vector).
-    return LocalToWorld(f.offset, f.offsetAng, ent:GetPos(), ent:GetAngles())
+    return f.offset, f.offsetAng
 end
 
 local function driveFollower(f)
-    local pos, ang = followerPose(f)
-    if not pos then return false end
-    f.psys:SetControlPoint(0, pos)
-    if f.roll then ang:RotateAroundAxis(ang:Forward(), f.roll) end
-    f.psys:SetControlPointOrientation(0, ang:Forward(), ang:Right(), ang:Up())
+    local pos, ang = followerLocalPose(f)
+    if not pos or not IsValid(f.proxy) then return false end
+    if f.roll then
+        ang = Angle(ang.p, ang.y, ang.r)
+        ang:RotateAroundAxis(ang:Forward(), f.roll)
+    end
+    f.proxy:SetLocalPos(pos)
+    f.proxy:SetLocalAngles(ang)
     return true
 end
 
--- Housekeeping only. Positions are NOT driven from Think: it runs before
--- the engine has interpolated this frame's entity transforms and set up
--- bones, so a control point placed here is one frame old -- ~13 u behind a
--- muzzle at 800 u/s, which is what PATTACH_POINT_FOLLOW never suffered.
+local function dropFollower(i)
+    local f = FOLLOWERS[i]
+    if LVS_GRED_FX.PsysValid(f.psys) then pcall(f.psys.StopEmission, f.psys, false, true) end
+    if IsValid(f.proxy) then f.proxy:Remove() end
+    table.remove(FOLLOWERS, i)
+end
+
 hook.Add("Think", "lvs_gred_fx_followers", function()
     local now = CurTime()
     for i = #FOLLOWERS, 1, -1 do
         local f = FOLLOWERS[i]
         local alive = now < f.until_ and LVS_GRED_FX.PsysValid(f.psys) and not f.psys:IsFinished()
-            and IsValid(f.ent)
-        if not alive then
-            if LVS_GRED_FX.PsysValid(f.psys) then pcall(f.psys.StopEmission, f.psys, false, true) end
-            table.remove(FOLLOWERS, i)
-        end
+            and IsValid(f.ent) and IsValid(f.proxy)
+        if not alive then dropFollower(i) end
     end
 end)
 
--- Positions are driven at the start of the render frame (PreRender: after
--- this frame's entity interpolation, before particle systems are simulated
--- and anything is drawn) and once more in the translucent pass, so the
--- simulation that places this frame's particles sees this frame's muzzle
--- whichever of the two the engine runs first. PATTACH_POINT_FOLLOW reads
--- the attachment inside the simulation itself, which is the behaviour
--- being matched. The skybox pass is skipped.
 local function driveAll()
     for i = #FOLLOWERS, 1, -1 do
         local f = FOLLOWERS[i]
-        if LVS_GRED_FX.PsysValid(f.psys) then
-            driveFollower(f)
-        end
+        if IsValid(f.proxy) and IsValid(f.ent) then driveFollower(f) end
     end
 end
 hook.Add("PreRender", "lvs_gred_fx_followers_pose", driveAll)
 hook.Add("PreDrawTranslucentRenderables", "lvs_gred_fx_followers_pose", function(_, isDrawingSkybox)
     if isDrawingSkybox then return end
     driveAll()
+end)
+
+hook.Add("ShutDown", "lvs_gred_fx_followers_cleanup", function()
+    for i = #FOLLOWERS, 1, -1 do dropFollower(i) end
 end)
 
 local function spawnFollower(name, ent, attID, opts)
@@ -206,12 +215,17 @@ local function spawnFollower(name, ent, attID, opts)
         roll = opts.roll,
         until_ = CurTime() + (opts.life or 1) + FOLLOW_GRACE,
     }
-    local pos, ang = followerPose(f)
-    if not pos then return nil end
-    local ok, psys = pcall(CreateParticleSystem, ent, name, PATTACH_CUSTOMORIGIN, 0, pos)
-    if not ok or not LVS_GRED_FX.PsysValid(psys) then return nil end
+    local proxy = ClientsideModel("models/error.mdl", RENDERGROUP_OTHER)
+    if not IsValid(proxy) then return nil end
+    proxy:SetNoDraw(true)
+    proxy:DrawShadow(false)
+    proxy:SetParent(f.ent)
+    f.proxy = proxy
+    if not driveFollower(f) then proxy:Remove() return nil end
+
+    local ok, psys = pcall(CreateParticleSystem, proxy, name, PATTACH_ABSORIGIN_FOLLOW, 0, vector_origin)
+    if not ok or not LVS_GRED_FX.PsysValid(psys) then proxy:Remove() return nil end
     f.psys = psys
-    driveFollower(f)
     FOLLOWERS[#FOLLOWERS + 1] = f
     if opts.life then LVS_GRED_FX.StopAfter(psys, opts.life, opts.clear) end
     if cfg.DebugEnabled() then
@@ -223,14 +237,63 @@ local function spawnFollower(name, ent, attID, opts)
     return psys
 end
 
+-- Old Lua-driven control point follower, kept for the A/B switch (mode 3).
+local CP_FOLLOWERS = {}
+local function cpPose(f)
+    local ent = f.ent
+    if not IsValid(ent) then return nil end
+    if f.att > 0 then
+        if ent.SetupBones then ent:SetupBones() end
+        local a = ent:GetAttachment(f.att)
+        if not a or not isvector(a.Pos) then return nil end
+        return LocalToWorld(f.offset, f.offsetAng, a.Pos, a.Ang)
+    end
+    return LocalToWorld(f.offset, f.offsetAng, ent:GetPos(), ent:GetAngles())
+end
+local function cpDrive(f)
+    local pos, ang = cpPose(f)
+    if not pos then return false end
+    f.psys:SetControlPoint(0, pos)
+    if f.roll then ang:RotateAroundAxis(ang:Forward(), f.roll) end
+    f.psys:SetControlPointOrientation(0, ang:Forward(), ang:Right(), ang:Up())
+    return true
+end
+hook.Add("PreRender", "lvs_gred_fx_cp_followers", function()
+    local now = CurTime()
+    for i = #CP_FOLLOWERS, 1, -1 do
+        local f = CP_FOLLOWERS[i]
+        if now >= f.until_ or not LVS_GRED_FX.PsysValid(f.psys) or f.psys:IsFinished() or not cpDrive(f) then
+            if LVS_GRED_FX.PsysValid(f.psys) then pcall(f.psys.StopEmission, f.psys, false, true) end
+            table.remove(CP_FOLLOWERS, i)
+        end
+    end
+end)
+local function spawnCpFollower(name, ent, attID, opts)
+    local f = {
+        ent = (attID == 0 and IsValid(opts.frameEnt)) and opts.frameEnt or ent,
+        att = attID or 0, offset = opts.offset,
+        offsetAng = isangle(opts.offsetAng) and opts.offsetAng or angle_zero,
+        roll = opts.roll, until_ = CurTime() + (opts.life or 1) + FOLLOW_GRACE,
+    }
+    local pos = cpPose(f)
+    if not pos then return nil end
+    local ok, psys = pcall(CreateParticleSystem, ent, name, PATTACH_CUSTOMORIGIN, 0, pos)
+    if not ok or not LVS_GRED_FX.PsysValid(psys) then return nil end
+    f.psys = psys
+    cpDrive(f)
+    CP_FOLLOWERS[#CP_FOLLOWERS + 1] = f
+    if opts.life then LVS_GRED_FX.StopAfter(psys, opts.life, opts.clear) end
+    return psys
+end
+
 -- A/B switch for diagnosing follow lag at speed:
---   0 = follower (control point driven from Lua each frame)  [default]
---   1 = engine PATTACH_POINT_FOLLOW on the attachment (position exact by
---       construction, orientation from the attachment's own axis, offset
---       ignored) -- for comparison only
---   2 = follower, but with the original unlocked gred PCF (no lock operator)
+--   0 = proxy entity parented to the root, engine-followed  [default]
+--   1 = engine PATTACH_POINT_FOLLOW on the attachment (position exact,
+--       orientation from the attachment's own axis, offset ignored)
+--   2 = mode 0 with the original unlocked gred PCF
+--   3 = the old Lua-driven control point follower
 local CvarFollowMode = CreateClientConVar("lvs_gred_fx_follow_mode", "0", false, false,
-    "0 follower (default), 1 engine attachment follow, 2 follower with unlocked PCF. Diagnostic.")
+    "0 proxy follow (default), 1 engine attachment follow, 2 proxy with unlocked PCF, 3 Lua control point. Diagnostic.")
 
 function LVS_GRED_FX.SpawnAttached(name, ent, attID, opts)
     if not cfg.Enabled() or not isstring(name) then return nil end
@@ -246,7 +309,7 @@ function LVS_GRED_FX.SpawnAttached(name, ent, attID, opts)
 
     if isvector(opts.offset) and not (mode == 1 and attID > 0) then
         if not LVS_GRED_FX.Preload(name) then return nil end
-        local psys = spawnFollower(name, ent, attID, opts)
+        local psys = (mode == 3) and spawnCpFollower(name, ent, attID, opts) or spawnFollower(name, ent, attID, opts)
         if psys or attID <= 0 then return psys end
         -- Could not drive the point: attach to the attachment itself below.
     end
