@@ -48,7 +48,7 @@ if not CLIENT then return end
 local cfg = LVS_GRED_FX.Config
 
 -- Printed in the pose diagnostics so a log can be matched to the code.
-LVS_GRED_FX.MUZZLE_BUILD = "pose-from-render-1"
+LVS_GRED_FX.MUZZLE_BUILD = "pose-from-render-2"
 
 -- Code point acceptance window (units). LVS fires from the attachment
 -- position itself; recoil moves the origin a few units back along the bore.
@@ -692,12 +692,41 @@ function LVS_GRED_FX.ResolveMuzzleAttachment(ent, muzzlePos, effectDataAtt, gunK
     -- names nothing for that gun, this configuration is the code. Only for
     -- the ballistics gun's own effect: a preset coax MG must not inherit
     -- the cannon's muzzle.
-    if not code and turretGun and isstring(ent.TurretBallisticsMuzzleAttachment) then
-        local name = ent.TurretBallisticsMuzzleAttachment
-        local id = ent.LookupAttachment and ent:LookupAttachment(name) or 0
-        if id and id > 0 then
-            code = { ids = { id }, names = { name }, reader = "turret_ballistics", weaponId = "ballistics" }
+    if not code and turretGun then
+        -- The field may sit on the vehicle or on the pod that holds the gun.
+        local owner = isstring(ent.TurretBallisticsMuzzleAttachment) and ent
+            or (IsValid(weaponHolder) and isstring(weaponHolder.TurretBallisticsMuzzleAttachment) and weaponHolder)
+            or nil
+        if owner then
+            local name = owner.TurretBallisticsMuzzleAttachment
+            local id = ent.LookupAttachment and ent:LookupAttachment(name) or 0
+            if id and id > 0 then
+                code = { ids = { id }, names = { name }, reader = "turret_ballistics", weaponId = "ballistics" }
+            end
         end
+    end
+
+    -- Why a gun ended up without code: printed once a second per vehicle.
+    if not code and cfg.DebugEnabled() and CurTime() - (ent._lvsGredNoCodeLog or 0) > 1 then
+        ent._lvsGredNoCodeLog = CurTime()
+        local weapon, pod, weaponId = LVS_GRED_FX_WEAPONCODE.ActiveWeapon(weaponHolder)
+        print("[lvs_gred_fx][code]", "build:", LVS_GRED_FX.MUZZLE_BUILD,
+            "holder:", weaponHolder:GetClass(), "root:", ent:GetClass(),
+            "active weapon:", weapon and "yes" or "no", "pod:", tostring(pod), "id:", tostring(weaponId),
+            "Attack:", weapon and type(weapon.Attack) or "-",
+            "turretGun:", tostring(turretGun),
+            "ballistics att (root/holder):", tostring(ent.TurretBallisticsMuzzleAttachment),
+            tostring(IsValid(weaponHolder) and weaponHolder.TurretBallisticsMuzzleAttachment),
+            "handlers:", (function()
+                local n = 0
+                if ent.GetWeaponHandler then
+                    for i = 1, 8 do
+                        local ok, h = pcall(ent.GetWeaponHandler, ent, i)
+                        if ok and IsValid(h) then n = n + 1 end
+                    end
+                end
+                return n
+            end)())
     end
 
     -- With LVS's server-local origin the entity frame is the base vehicle's
