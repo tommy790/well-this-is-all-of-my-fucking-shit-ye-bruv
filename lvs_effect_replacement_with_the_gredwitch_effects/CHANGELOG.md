@@ -6,6 +6,7 @@ Muzzle flashes and smoke now land on the correct gun on every vehicle,
 including while driving fast and with the turret turned.
 
 **Fixed**
+- Muzzle flash landing on the wrong gun while driving (T-35 turret MG flashing from the cannon): the shot origin comes from the vehicle's newest networked transform while the client's attachments trail it by the interpolation delay, so at speed the MG's origin was nearer the cannon muzzle than the MG. The origin is now re-expressed in the interpolated frame before matching; the debug line shows the compensated distance as `motion:`.
 - Fixed muzzle flash and smoke appearing on the wrong part of the vehicle (wheels, hull, suspension) when the gun was aimed down or close to the hull.
 - Fixed flashes attaching to the wrong barrel while the vehicle is moving fast with the turret turned.
 - Fixed vehicles with two guns on one turret (for example BMD-4M) mixing up which barrel the flash appears on.

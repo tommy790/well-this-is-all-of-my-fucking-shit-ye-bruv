@@ -221,8 +221,36 @@ end
 -- Shot origin -> the same point on the frozen reference, expressed relative
 -- to the live attachment it is nearest to (hull and turret motion cancel
 -- out because that attachment moved with them).
+-- The shot origin comes from the server, i.e. from the vehicle's newest
+-- networked transform; the client's attachments are read from its
+-- interpolated transform, which trails that by the interpolation delay. On a
+-- moving vehicle the two differ by up to speed x cl_interp (28 u on a T-35
+-- at cruise), enough to put the MG's shot origin nearer the cannon muzzle
+-- than the MG. Re-expressing the origin from the network frame in the
+-- interpolated frame removes the hull's share of that offset exactly; the
+-- turret's share is handled by the frozen reference model below.
+local LAST_MOTION_COMP = 0
+local function compensateHullMotion(veh, worldPos, worldPos2)
+    LAST_MOTION_COMP = 0
+    local netOrg = veh.GetNetworkOrigin and veh:GetNetworkOrigin() or nil
+    local netAng = veh.GetNetworkAngles and veh:GetNetworkAngles() or nil
+    if not isvector(netOrg) or netOrg == vector_origin or not isangle(netAng) then
+        return worldPos, worldPos2
+    end
+    local liveOrg, liveAng = veh:GetPos(), veh:GetAngles()
+    if netOrg == liveOrg and netAng == liveAng then return worldPos, worldPos2 end
+    local function map(p)
+        return LocalToWorld(WorldToLocal(p, angle_zero, netOrg, netAng), angle_zero, liveOrg, liveAng)
+    end
+    local shifted = map(worldPos)
+    LAST_MOTION_COMP = shifted:Distance(worldPos)
+    return shifted, worldPos2 and map(worldPos2) or nil
+end
+function LVS_GRED_FX.LastMotionCompensation() return LAST_MOTION_COMP end
+
 local function toReferenceSpace(veh, ref, worldPos, worldPos2)
     if veh.SetupBones then pcall(veh.SetupBones, veh) end
+    worldPos, worldPos2 = compensateHullMotion(veh, worldPos, worldPos2)
     local ok, atts = pcall(veh.GetAttachments, veh)
     local bestId, bestD, bestAtt = nil, math.huge, nil
     if ok and istable(atts) then
@@ -608,7 +636,9 @@ function LVS_GRED_FX.ResolveMuzzleAttachment(ent, muzzlePos, effectDataAtt, gunK
     local id, info = resolveOnReference(ent, muzzlePos, effectDataAtt, dir, code)
     if id == nil then
         -- Reference model could not be created: resolve on the live entity.
-        id, info = resolveImpl(ent, muzzlePos, effectDataAtt, dir, code)
+        local livePos, liveTip = compensateHullMotion(ent, muzzlePos, dir and (muzzlePos + dir * 16) or nil)
+        local liveDir = liveTip and (liveTip - livePos):GetNormalized() or nil
+        id, info = resolveImpl(ent, livePos, effectDataAtt, liveDir, code)
     end
 
     -- Only a confident result is remembered: an attachment that was right at
