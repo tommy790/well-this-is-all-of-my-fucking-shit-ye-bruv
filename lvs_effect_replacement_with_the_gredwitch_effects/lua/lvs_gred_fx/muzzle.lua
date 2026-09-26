@@ -139,11 +139,14 @@ local function captureTurretPose(ref, veh)
     ref:SetPos(REF_ORIGIN)
     ref:SetAngles(angle_zero)
 
-    -- Every pose parameter, not just the main turret's: multi-turret
-    -- vehicles (T-35) drive their secondary turrets and MGs through their
-    -- own pose parameters. The client reads a pose parameter back
-    -- normalised (0..1 across its range), so it is mapped through the
-    -- range before being written.
+    -- Every pose parameter, copied from what the client is actually
+    -- rendering. The client reads a pose parameter back normalised (0..1
+    -- across its range; verified on the T-35: turret_yaw 0.059 in [0..360]
+    -- with the turret at 21 degrees), so it is mapped through the range
+    -- before being written. LVS's GetTurretYaw/GetTurretPitch are NOT used:
+    -- they are plain Lua fields the client does not necessarily maintain
+    -- (0 on the T-35 while its turret is turned), and writing them over the
+    -- copied pose is exactly what left the reference turret at zero.
     local nPose = veh.GetNumPoseParameters and veh:GetNumPoseParameters() or 0
     for i = 0, nPose - 1 do
         local pname = veh:GetPoseParameterName(i)
@@ -151,23 +154,9 @@ local function captureTurretPose(ref, veh)
             local pmin, pmax = veh:GetPoseParameterRange(i)
             local norm = veh:GetPoseParameter(pname)
             if isnumber(norm) and isnumber(pmin) and isnumber(pmax) then
-                local value = norm
-                if norm >= 0 and norm <= 1 and (pmin < 0 or pmax > 1) then
-                    value = pmin + norm * (pmax - pmin)
-                end
-                ref:SetPoseParameter(pname, value)
+                ref:SetPoseParameter(pname, pmin + norm * (pmax - pmin))
             end
         end
-    end
-
-    -- The main turret from LVS's own accessors, exact (the normalised
-    -- read-back of a looping yaw is ambiguous at the wrap).
-    local yawName, pitchName = veh.TurretYawPoseParameterName, veh.TurretPitchPoseParameterName
-    if isstring(yawName) and yawName ~= "" and veh.GetTurretYaw then
-        ref:SetPoseParameter(yawName, (veh.TurretYawOffset or 0) + (veh:GetTurretYaw() or 0) * (veh.TurretYawMul or 1))
-    end
-    if isstring(pitchName) and pitchName ~= "" and veh.GetTurretPitch then
-        ref:SetPoseParameter(pitchName, (veh.TurretPitchOffset or 0) + (veh:GetTurretPitch() or 0) * (veh.TurretPitchMul or 1))
     end
 
     -- LVS bone pose parameters (gun elevation / recoil) are bone manipulations.
