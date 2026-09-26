@@ -48,7 +48,7 @@ if not CLIENT then return end
 local cfg = LVS_GRED_FX.Config
 
 -- Printed in the pose diagnostics so a log can be matched to the code.
-LVS_GRED_FX.MUZZLE_BUILD = "pose-from-render-3"
+LVS_GRED_FX.MUZZLE_BUILD = "pose-from-render-4"
 
 -- Code point acceptance window (units). LVS fires from the attachment
 -- position itself; recoil moves the origin a few units back along the bore.
@@ -740,6 +740,27 @@ function LVS_GRED_FX.ResolveMuzzleAttachment(ent, muzzlePos, effectDataAtt, gunK
             "turretGun:", tostring(turretGun),
             "ballistics att (root/holder):", tostring(ent.TurretBallisticsMuzzleAttachment),
             tostring(IsValid(weaponHolder) and weaponHolder.TurretBallisticsMuzzleAttachment),
+            "dir:", dir and tostring(dir) or "nil",
+            "attachments (along/perp from shot):", (function()
+                local parts = {}
+                local okA, atts = pcall(ent.GetAttachments, ent)
+                if okA and istable(atts) then
+                    if ent.SetupBones then pcall(ent.SetupBones, ent) end
+                    for _, a in ipairs(atts) do
+                        local d = LVS_GRED_FX.GetAttachmentData(ent, a.id)
+                        if d then
+                            local v = d.Pos - muzzlePos
+                            if dir then
+                                local along = v:Dot(dir)
+                                parts[#parts + 1] = string.format("%s:%.1f/%.1f", tostring(a.name), along, (v - dir * along):Length())
+                            else
+                                parts[#parts + 1] = string.format("%s:%.1f", tostring(a.name), v:Length())
+                            end
+                        end
+                    end
+                end
+                return table.concat(parts, " ")
+            end)(),
             "handlers:", (function()
                 local n = 0
                 if ent.GetWeaponHandler then
