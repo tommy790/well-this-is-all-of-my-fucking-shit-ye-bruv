@@ -48,7 +48,7 @@ if not CLIENT then return end
 local cfg = LVS_GRED_FX.Config
 
 -- Printed in the pose diagnostics so a log can be matched to the code.
-LVS_GRED_FX.MUZZLE_BUILD = "proxy-follow-1"
+LVS_GRED_FX.MUZZLE_BUILD = "proxy-follow-2"
 
 -- Code point acceptance window (units). LVS fires from the attachment
 -- position itself; recoil moves the origin a few units back along the bore.
@@ -508,6 +508,13 @@ local function angleDelta(a, b)
     return math.max(math.abs(math.AngleDifference(a.p, b.p)), math.abs(math.AngleDifference(a.y, b.y)),
         math.abs(math.AngleDifference(a.r, b.r)))
 end
+-- The tick correction learned for a weapon, across all of its barrels: the
+-- barrel pick needs it before any barrel is known.
+local WEAPON_K = {}
+local function weaponKey(ent, code)
+    return ent:GetClass() .. "|" .. tostring(code and code.weaponId or "")
+end
+
 local LAST_TICK_COMP, LAST_TICK_K, LAST_CALM = 0, 0, false
 local function steadyOffset(ent, id, code, rawOffset, stepOffset, att)
     local key = ent:GetClass() .. "|" .. id .. "|" .. tostring(code and code.weaponId or "")
@@ -542,6 +549,7 @@ local function steadyOffset(ent, id, code, rawOffset, stepOffset, att)
     local m0, m1 = medianOffset(rec.samples, 0), medianOffset(rec.samples, 1)
     local k = (m1:Length() < m0:Length()) and 1 or 0
     LAST_TICK_K, LAST_TICK_COMP = k, stepOffset:Length() * k
+    WEAPON_K[weaponKey(ent, code)] = k
     return k == 1 and m1 or m0
 end
 function LVS_GRED_FX.LastTickCompensation() return LAST_TICK_COMP, LAST_TICK_K, LAST_CALM end
@@ -562,9 +570,18 @@ local function resolveImpl(ent, muzzlePos, dir, code, frameEnt, stepLocal, turre
     local cache = GetCache(ent)
 
     if code and code.ids and #code.ids > 0 then
-        local id, info = resolveByWeaponCode(ent, cache, muzzlePos, dir, code)
+        -- Pick the barrel with the origin where the gun actually is: on a
+        -- weapon whose origin is a tick stale, a fast hull with the turret
+        -- turned shifts the raw origin along the line between twin barrels
+        -- (Crusader AA: 5.6 u, about half the spacing) and the line test
+        -- lands on the neighbour.
+        local pickPos = muzzlePos
+        if stepLocal and WEAPON_K[weaponKey(ent, code)] == 1 then
+            pickPos = muzzlePos + stepLocal
+        end
+        local id, info = resolveByWeaponCode(ent, cache, pickPos, dir, code)
         if id == 0 then
-            local codeId, codeD = nearestOf(ent, code.ids, muzzlePos, MAX_NAMED_DIST * MAX_NAMED_DIST)
+            local codeId, codeD = nearestOf(ent, code.ids, pickPos, MAX_NAMED_DIST * MAX_NAMED_DIST)
             if codeId > 0 then
                 id, info = result(cache, codeId, "weapon_code_near", codeD)
                 info.reader = code.reader
