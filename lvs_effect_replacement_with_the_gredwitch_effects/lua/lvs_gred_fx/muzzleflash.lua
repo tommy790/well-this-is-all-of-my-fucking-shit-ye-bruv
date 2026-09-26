@@ -129,6 +129,8 @@ end
     effectName: the LVS muzzle effect name (lvs_muzzle, lvs_muzzle_colorable,
                 lvs_pulserifle_muzzle, lvs_haubitze_muzzle, ...)
 -----------------------------------------------------------------------------]]
+local spawnResolved
+
 function LVS_GRED_FX_MUZZLEFLASH.Spawn(effectName, self, data)
     if not cfg.Enabled() then return false end
 
@@ -141,6 +143,23 @@ function LVS_GRED_FX_MUZZLEFLASH.Spawn(effectName, self, data)
         return false
     end
 
+    -- The tracer record (which carries LVS's lag-free local origin) normally
+    -- arrives before the muzzle effect; when it has not yet, wait one frame
+    -- for it rather than resolve from the lagging world origin. EffectData
+    -- objects are pooled, so only the extracted values are kept.
+    if IsValid(ent) and not LVS_GRED_FX_TRACER.RecentShot(LVS_GRED_FX.VehicleRoot(ent), muzzlePos) then
+        local pos, nrm = Vector(muzzlePos), isvector(normal) and Vector(normal) or nil
+        timer.Simple(0, function()
+            if not cfg.Enabled() or not IsValid(ent) then return end
+            spawnResolved(effectName, ent, pos, nrm, dataAtt)
+        end)
+        return true
+    end
+
+    return spawnResolved(effectName, ent, muzzlePos, normal, dataAtt)
+end
+
+spawnResolved = function(effectName, ent, muzzlePos, normal, dataAtt)
     local ang = isvector(normal) and normal:Angle() or nil
 
     if not IsValid(ent) then
@@ -175,10 +194,12 @@ function LVS_GRED_FX_MUZZLEFLASH.Spawn(effectName, self, data)
 
     -- Resolve the correct muzzle attachment (never "attachment 1" guessing);
     -- remembered per vehicle + gun after the first shot.
-    local att, info = LVS_GRED_FX.ResolveMuzzleAttachment(rootEnt, muzzlePos, dataAtt, gunKey, normal, ent)
+    local att, info = LVS_GRED_FX.ResolveMuzzleAttachment(rootEnt, muzzlePos, dataAtt, gunKey, normal, ent,
+        rec and rec.srcLocal or nil)
 
     if cfg.DebugEnabled() then
         Debug("muzzle attachment:", "id:", att, "method:", info and info.method,
+            "origin:", (rec and rec.srcLocal) and "server-local" or "world",
             "dist:", info and info.dist and string.format("%.1f", info.dist) or "n/a",
             "off-axis:", info and info.perp and string.format("%.1f", info.perp) or "-",
             "name:", info and info.name or "?",
@@ -285,7 +306,9 @@ function LVS_GRED_FX_MUZZLEFLASH.SpawnGeneric(effectName, self, data)
 
     local ang = isvector(normal) and normal:Angle() or nil
     local rootEnt = LVS_GRED_FX.VehicleRoot(ent)
-    local att, info = LVS_GRED_FX.ResolveMuzzleAttachment(rootEnt, muzzlePos, dataAtt, nil, normal, ent)
+    local recG = LVS_GRED_FX_TRACER.RecentShot(rootEnt, muzzlePos)
+    local att, info = LVS_GRED_FX.ResolveMuzzleAttachment(rootEnt, muzzlePos, dataAtt, nil, normal, ent,
+        recG and recG.srcLocal or nil)
 
     if cfg.DebugEnabled() then
         Debug("generic muzzle effect:", effectName, "att:", att,

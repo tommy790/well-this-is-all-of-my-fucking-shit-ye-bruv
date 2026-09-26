@@ -73,14 +73,20 @@ local function getList(ent)
 end
 
 -- Record a shot so the muzzle flash and impact systems can pair with it.
-function LVS_GRED_FX_TRACER.NoteShot(ent, name, srcPos, map)
+-- `srcLocal` is LVS's bullet.SrcEntity: the shot origin in the base
+-- vehicle's local space, computed ON THE SERVER at fire time
+-- (lvs_base/init.lua: data.SrcEntity = self:WorldToLocal(data.Src)). It is
+-- the one origin free of the client's interpolation lag, which is why LVS
+-- itself blends its bullets from Entity:LocalToWorld(SrcEntity).
+function LVS_GRED_FX_TRACER.NoteShot(ent, name, srcPos, map, srcLocal)
     if not IsValid(ent) then return end
 
     local rec = {
-        time   = CurTime(),
-        name   = name,
-        srcPos = srcPos,
-        map    = map,
+        time     = CurTime(),
+        name     = name,
+        srcPos   = srcPos,
+        srcLocal = (isvector(srcLocal) and srcLocal ~= vector_origin) and srcLocal or nil,
+        map      = map,
     }
 
     if map and map.caliber then
@@ -97,7 +103,8 @@ function LVS_GRED_FX_TRACER.NoteShot(ent, name, srcPos, map)
 
     if cfg.DebugEnabled() then
         Debug("tracer recorded:", name, "ent:", ent:GetClass(),
-            "caliber:", map and map.caliber or "?", "src:", tostring(srcPos))
+            "caliber:", map and map.caliber or "?", "src:", tostring(srcPos),
+            "local src:", rec.srcLocal and "yes" or "no")
     end
 end
 
@@ -253,7 +260,7 @@ function LVS_GRED_FX_TRACER.Init(name, self, data)
 
     -- Record the shot for muzzle-flash pairing and impact caliber inference.
     if IsValid(ent) and isvector(srcPos) then
-        LVS_GRED_FX_TRACER.NoteShot(ent, name, srcPos, map)
+        LVS_GRED_FX_TRACER.NoteShot(ent, name, srcPos, map, bullet and bullet.SrcEntity or nil)
     end
 
     -- Without the LVS bullet there is no velocity to give the particle;

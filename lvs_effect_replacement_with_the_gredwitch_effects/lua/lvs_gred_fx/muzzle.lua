@@ -22,6 +22,16 @@
          vector via ent:LocalToWorld): the origin is expressed in the
          firing entity's own transform and driven from it every frame.
 
+    Where the origin comes from
+      LVS networks each bullet with SrcEntity, the shot origin in the base
+      vehicle's local space computed on the server at fire time. Whenever
+      the tracer record for the shot carries it, that is the origin used:
+      it cannot lag, however fast the hull moves (the world origin of the
+      muzzle effect trails the client's interpolated vehicle by speed x
+      interpolation time -- tens of units at speed, which put the flash and
+      smoke in the air beside a moving vehicle). The world origin is only
+      used when no tracer record exists for the shot.
+
     Where positions are measured
       Attachment positions are NOT read from the rendered vehicle. Each
       vehicle gets a hidden reference copy of its model whose hull never
@@ -447,7 +457,7 @@ local function resolveImpl(ent, muzzlePos, dir, code, frameEnt)
     return 0, info
 end
 
-local function resolveOnReference(ent, muzzlePos, dir, code, frameEnt)
+local function resolveOnReference(ent, muzzlePos, dir, code, frameEnt, srcLocal)
     local now = CurTime()
     local shotId = ent._lvsGredShotId
     if not shotId or now - (ent._lvsGredShotTime or 0) > SHOT_WINDOW then
@@ -459,8 +469,21 @@ local function resolveOnReference(ent, muzzlePos, dir, code, frameEnt)
     if not IsValid(ref) then return nil end
 
     ACTIVE_REF, ACTIVE_VEH = ref, ent
-    local refPos, refTip = toReferenceSpace(ent, ref, muzzlePos, dir and (muzzlePos + dir * 16) or nil)
-    local refDir = refTip and (refTip - refPos):GetNormalized() or nil
+    local refPos, refDir
+    if isvector(srcLocal) then
+        -- LVS's server-side local origin: the hull frame IS the reference
+        -- frame, so this is exact regardless of how far the hull has moved
+        -- since the shot. Only the direction still needs the live angles.
+        refPos = REF_ORIGIN + srcLocal
+        if dir then
+            refDir = ent:WorldToLocal(ent:GetPos() + dir):GetNormalized()
+        end
+        LAST_MOTION_COMP = 0
+    else
+        local refTip
+        refPos, refTip = toReferenceSpace(ent, ref, muzzlePos, dir and (muzzlePos + dir * 16) or nil)
+        refDir = refTip and (refTip - refPos):GetNormalized() or nil
+    end
     local ok, id, info = pcall(resolveImpl, ent, refPos, refDir, code, frameEnt)
     ACTIVE_REF, ACTIVE_VEH = nil, nil
     if not ok then return nil end
@@ -486,17 +509,22 @@ end
     LVS's EffectData attachment id is unreliable and nothing is remembered
     between shots because nothing is estimated.
 -----------------------------------------------------------------------------]]
-function LVS_GRED_FX.ResolveMuzzleAttachment(ent, muzzlePos, effectDataAtt, gunKey, dir, weaponEnt)
+function LVS_GRED_FX.ResolveMuzzleAttachment(ent, muzzlePos, effectDataAtt, gunKey, dir, weaponEnt, srcLocal)
     if not IsValid(ent) then return 0, { method = "none", reason = "invalid entity" } end
     if not isvector(muzzlePos) then return 0, { method = "none", reason = "invalid muzzle position" } end
     if isvector(dir) and dir:LengthSqr() > 0.0001 then dir = dir:GetNormalized() else dir = nil end
 
     -- The entity LVS fired the effect on (gunner pod or the vehicle itself)
     -- carries the selected weapon; `ent` is the root the attachments live on.
-    local frameEnt = IsValid(weaponEnt) and weaponEnt or ent
-    local code = LVS_GRED_FX_WEAPONCODE.AttachmentsFor(frameEnt, ent)
+    local weaponHolder = IsValid(weaponEnt) and weaponEnt or ent
+    local code = LVS_GRED_FX_WEAPONCODE.AttachmentsFor(weaponHolder, ent)
 
-    local id, info = resolveOnReference(ent, muzzlePos, dir, code, frameEnt)
+    -- With LVS's server-local origin the entity frame is the base vehicle's
+    -- (SrcEntity is expressed in it, also for gunner pods); otherwise the
+    -- firing entity's own.
+    local frameEnt = isvector(srcLocal) and ent or weaponHolder
+
+    local id, info = resolveOnReference(ent, muzzlePos, dir, code, frameEnt, srcLocal)
     if id == nil then
         local livePos, liveTip = compensateHullMotion(ent, muzzlePos, dir and (muzzlePos + dir * 16) or nil)
         local liveDir = liveTip and (liveTip - livePos):GetNormalized() or nil
@@ -505,6 +533,9 @@ function LVS_GRED_FX.ResolveMuzzleAttachment(ent, muzzlePos, effectDataAtt, gunK
 
     if id == 0 and info and info.method == "entity_frame" then
         info.frameEnt = frameEnt
+        if not info.offset and isvector(srcLocal) then
+            info.offset, info.offsetAng = frameOffset(ent:LocalToWorld(srcLocal), dir, ent:GetPos(), ent:GetAngles())
+        end
         if not info.offset then
             -- Gunner pod or no reference: the pod's live transform. The
             -- origin is moved into the client's interpolated frame first so
