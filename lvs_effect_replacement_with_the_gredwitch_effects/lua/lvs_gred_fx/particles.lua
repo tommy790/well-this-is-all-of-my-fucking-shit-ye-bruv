@@ -150,20 +150,41 @@ local function followerPose(f)
     return LocalToWorld(f.offset, f.offsetAng, ent:GetPos(), ent:GetAngles())
 end
 
+local function driveFollower(f)
+    local pos, ang = followerPose(f)
+    if not pos then return false end
+    f.psys:SetControlPoint(0, pos)
+    if f.roll then ang:RotateAroundAxis(ang:Forward(), f.roll) end
+    f.psys:SetControlPointOrientation(0, ang:Forward(), ang:Right(), ang:Up())
+    return true
+end
+
+-- Housekeeping only. Positions are NOT driven from Think: it runs before
+-- the engine has interpolated this frame's entity transforms and set up
+-- bones, so a control point placed here is one frame old -- ~13 u behind a
+-- muzzle at 800 u/s, which is what PATTACH_POINT_FOLLOW never suffered.
 hook.Add("Think", "lvs_gred_fx_followers", function()
     local now = CurTime()
     for i = #FOLLOWERS, 1, -1 do
         local f = FOLLOWERS[i]
         local alive = now < f.until_ and LVS_GRED_FX.PsysValid(f.psys) and not f.psys:IsFinished()
-        local pos, ang
-        if alive then pos, ang = followerPose(f) end
-        if not pos then
+            and IsValid(f.ent)
+        if not alive then
             if LVS_GRED_FX.PsysValid(f.psys) then pcall(f.psys.StopEmission, f.psys, false, true) end
             table.remove(FOLLOWERS, i)
-        else
-            f.psys:SetControlPoint(0, pos)
-            if f.roll then ang:RotateAroundAxis(ang:Forward(), f.roll) end
-            f.psys:SetControlPointOrientation(0, ang:Forward(), ang:Right(), ang:Up())
+        end
+    end
+end)
+
+-- Positions are driven here: after this frame's interpolation and bone
+-- setup, immediately before translucent particles are simulated and drawn.
+-- Skipped for the skybox pass (the main pass follows and drives them).
+hook.Add("PreDrawTranslucentRenderables", "lvs_gred_fx_followers_pose", function(_, isDrawingSkybox)
+    if isDrawingSkybox then return end
+    for i = #FOLLOWERS, 1, -1 do
+        local f = FOLLOWERS[i]
+        if LVS_GRED_FX.PsysValid(f.psys) then
+            driveFollower(f)
         end
     end
 end)
@@ -182,9 +203,7 @@ local function spawnFollower(name, ent, attID, opts)
     local ok, psys = pcall(CreateParticleSystem, ent, name, PATTACH_CUSTOMORIGIN, 0, pos)
     if not ok or not LVS_GRED_FX.PsysValid(psys) then return nil end
     f.psys = psys
-    psys:SetControlPoint(0, pos)
-    if f.roll then ang:RotateAroundAxis(ang:Forward(), f.roll) end
-    psys:SetControlPointOrientation(0, ang:Forward(), ang:Right(), ang:Up())
+    driveFollower(f)
     FOLLOWERS[#FOLLOWERS + 1] = f
     if opts.life then LVS_GRED_FX.StopAfter(psys, opts.life, opts.clear) end
     if cfg.DebugEnabled() then
