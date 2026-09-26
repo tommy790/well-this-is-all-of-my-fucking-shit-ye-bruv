@@ -18,6 +18,7 @@ down, held and let go by actual forces and constraints.
 - Physgun-frozen vehicles are respected: deploy is refused while frozen and the addon no longer unfreezes your props.
 
 **Fixed**
+- Spikes no longer vanish when the lofted status clears: the pistons still aboard are stroked back into their cylinders (torn-out ones from the extension they were at) and only spikes actually lost as debris are replaced, instead of every spike being deleted and not recreated until the next deploy.
 - Fixed a vehicle with a partial spike set (e.g. two front spikes) only lowering its nose: the airbags now act at every mount of the vehicle's layout regardless of how many spikes are fitted, and after the spikes lock, the airbags under mounts that have no spike stay inflated so the whole vehicle remains lowered.
 - Fixed the vehicle snapping straight up when undeploying with no spikes fitted (and any retract where the mounts had gone below the surface): the springs that let the suspension back up at hydraulic speed were never created, because the ground trace refused a surface that was above the pulled-down mount. The retract now rises over the same time the airbag stage took to lower.
 - Fixed lowering not happening at all on some setups (the springs were never created).

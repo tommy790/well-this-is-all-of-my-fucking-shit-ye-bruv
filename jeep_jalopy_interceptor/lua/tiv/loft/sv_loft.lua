@@ -404,21 +404,31 @@ function TIV.Loft.TriggerLoft(veh, data)
 
     CleanupLoftTracking(entIdx)
 
-    -- 5. Automatic reset 15 seconds after loft to safely mount fresh spikes and return to idle
+    -- 5. Automatic reset 15 seconds after loft: the pistons still aboard are
+    --    stroked home, anything lost is replaced, and the vehicle is idle.
     timer.Simple(15, function()
         local liveVeh  = Entity(entIdx)
         local liveData = TIV.Deploy.Vehicles and TIV.Deploy.Vehicles[entIdx]
 
         if not liveData or liveData.sessionID ~= sessionID then return end
 
-        if liveData.spikes then
-            for _, sd in ipairs(liveData.spikes) do
+        if IsValid(liveVeh) and TIV.SpikeAnim and TIV.SpikeAnim.StowAll then
+            TIV.SpikeAnim.StowAll(liveVeh, liveData, function()
+                -- EnsureSpikes only rebuilds when the surviving count no
+                -- longer matches, and only from idle.
+                if not IsValid(liveVeh) or liveData.sessionID ~= sessionID then return end
+                if liveData.state == "idle" and TIV.Deploy.EnsureSpikes then
+                    TIV.Deploy.EnsureSpikes(liveVeh, liveData)
+                end
+            end)
+        else
+            for _, sd in ipairs(liveData.spikes or {}) do
                 if IsValid(sd.entity) then SafeRemoveEntity(sd.entity) end
             end
+            liveData.spikes        = {}
+            liveData.spikeAnims    = {}
+            liveData.spikesCreated = false
         end
-        liveData.spikes          = {}
-        liveData.spikeAnims      = {}
-        liveData.spikesCreated   = false
         liveData.state           = "idle"
         liveData.anchored        = false
         liveData.gravityReleased = false
@@ -443,6 +453,9 @@ function TIV.Loft.TriggerLoft(veh, data)
             end
 
             TIV.Deploy.BroadcastState(liveVeh, "idle")
+            -- Replaces spikes lost as debris right away (a full set that is
+            -- merely being stroked home matches the count and is kept).
+            if TIV.Deploy.EnsureSpikes then TIV.Deploy.EnsureSpikes(liveVeh, liveData) end
             if TIV.CustomComponents and TIV.CustomComponents.EnsureArmor then
                 TIV.CustomComponents.EnsureArmor(liveVeh)
             end

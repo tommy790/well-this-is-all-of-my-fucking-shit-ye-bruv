@@ -591,4 +591,44 @@ function TIV.SpikeAnim.RetractFromGround(veh, data, callback)
 end
 TIV.SpikeAnim.InterruptAndRetract = TIV.SpikeAnim.RetractFromGround
 
+-- After a loft: every piston that is still aboard but not home (torn out
+-- at some extension) is stroked back into its cylinder at retract speed, and
+-- the rams follow. Spikes lost as debris are simply not there any more;
+-- TIV.Deploy.EnsureSpikes rebuilds the set if the count no longer matches.
+function TIV.SpikeAnim.StowAll(veh, data, callback)
+    if not IsValid(veh) or not data or not data.spikes then
+        if callback then callback() end
+        return
+    end
+    local speed = SpeedMult()
+    local duration = (TIV.Config.SpikeRetractDuration or 3) / speed
+    local sessionID = data.sessionID or ("stow_" .. veh:EntIndex())
+    local pending = 0
+    local function done()
+        pending = pending - 1
+        if pending <= 0 and callback then callback() end
+    end
+
+    StartRamStroke(sessionID, veh, 0, duration)
+
+    for i, sd in ipairs(data.spikes) do
+        local spike = sd.entity
+        if IsValid(spike) and not (sd.phase == "idle" and IsValid(spike:GetParent())) then
+            sd.tableIndex = i
+            pending = pending + 1
+            if data.spikeAnims then data.spikeAnims[sd.index] = "retracting" end
+            SendPhase(veh, sd.index, "retracting")
+            StartStroke(sessionID, veh, sd, sd.storedLocalPos or vector_origin, duration, "stow", nil, function(_, ok)
+                if ok and IsValid(veh) and IsValid(spike) then
+                    TIV.SpikeAnim.ReparentSpike(veh, spike, sd)
+                    if data.spikeAnims then data.spikeAnims[sd.index] = "idle" end
+                    SendPhase(veh, sd.index, "idle")
+                end
+                done()
+            end)
+        end
+    end
+    if pending == 0 and callback then callback() end
+end
+
 print("[TIV] Dynamic spike animation system loaded")
