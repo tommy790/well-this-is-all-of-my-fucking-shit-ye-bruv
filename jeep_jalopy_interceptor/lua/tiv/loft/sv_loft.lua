@@ -23,7 +23,7 @@ end
 
 CreateConVar("tiv_loft_release_spikes", "0",
     { FCVAR_ARCHIVE, FCVAR_NOTIFY, FCVAR_REPLICATED },
-    "If 1, spikes fly free as debris on loft. If 0, they stay parented to the vehicle.")
+    "If 1, spikes fly free as debris on loft. If 0, they stay on the vehicle at the extension they were torn out at.")
 
 -- ============================================================================
 -- EXTERNAL TORNADO MOD IMMUNITY HELPERS
@@ -85,6 +85,8 @@ TIV.Loft.GetWindScale = GetWindScale
 local function CleanupLoftTracking(entIdx)
     TIV.Loft.WindTimers[entIdx]    = nil
     TIV.Loft.FailingGroups[entIdx] = nil
+    local data = TIV.Deploy.Vehicles and TIV.Deploy.Vehicles[entIdx]
+    if data and data.state == "anchored" then data.gravityReleased = false end
     for wave = 1, 3 do
         timer.Remove("TIV_WaveFail_" .. entIdx .. "_" .. wave)
     end
@@ -174,40 +176,26 @@ function TIV.Loft.FailSpikeList(veh, data, spikesToFail, duration)
             if sd.failed then return end
             sd.failed = true
 
-            -- Sever the hold on this spike first, then let the spike itself
-            -- tear out of the ground as debris.
-            TIV.Anchor.BreakSpike(veh, data, spikeIdx)
+            -- The ground gives: the spike is pulled out and rides with the
+            -- chassis at the extension it had. Every constraint on it goes
+            -- (hold, ground weld, nocollide); with the wind now acting on the
+            -- chassis (gravityReleased) the freed side lifts and the spike
+            -- visibly slides out of the earth while the others still hold.
+            TIV.Anchor.UnplantSingle(veh, data, spikeIdx)
 
             local spikeEnt = sd.entity
             if IsValid(spikeEnt) then
-                spikeEnt:SetMoveType(MOVETYPE_VPHYSICS)
-                local sp = spikeEnt:GetPhysicsObject()
-                if IsValid(sp) then
-                    sp:EnableMotion(true)
-                    sp:EnableGravity(true)
-                    sp:Wake()
-                    sp:ApplyForceCenter((Vector(0, 0, 400) + VectorRand() * 200) * sp:GetMass())
-                end
-                spikeEnt:SetCollisionGroup(COLLISION_GROUP_DEBRIS)
-
                 local sparkFX = EffectData()
                 sparkFX:SetOrigin(spikeEnt:GetPos())
                 sparkFX:SetMagnitude(8)
                 sparkFX:SetScale(3)
                 util.Effect("Sparks", sparkFX)
                 spikeEnt:EmitSound("physics/metal/metal_box_break" .. math.random(1, 2) .. ".wav", 90, math.random(60, 80))
-
-                -- Taken back aboard shortly after; it is still the vehicle's
-                -- piston, it just lost its grip on the ground.
-                timer.Simple(0.4, function()
-                    if not IsValid(veh) or not IsValid(spikeEnt) then return end
-                    if TIV.SpikeAnim and TIV.SpikeAnim.ReparentSpike then
-                        TIV.SpikeAnim.ReparentSpike(veh, spikeEnt, sd)
-                        sd.failed = true
-                    end
-                    if data.spikeAnims then data.spikeAnims[spikeIdx] = "idle" end
-                end)
+                if TIV.SpikeAnim and TIV.SpikeAnim.ReparentSpikeTorn then
+                    TIV.SpikeAnim.ReparentSpikeTorn(veh, spikeEnt, sd)
+                end
             end
+            if data.spikeAnims then data.spikeAnims[spikeIdx] = "torn" end
 
             net.Start("TIV_AnchorWarning")
                 net.WriteEntity(veh)
@@ -239,6 +227,14 @@ function TIV.Loft.StartDirectionalFailure(veh, data)
 
     TIV.Loft.WindTimers[entIndex]    = CurTime()
     TIV.Loft.FailingGroups[entIndex] = true
+
+    -- From here the storm is allowed to act on the chassis (sv_wind applies
+    -- its force to an anchored vehicle only while gravityReleased is set), so
+    -- the vehicle strains against the spikes that are left, and the airbag
+    -- springs are dropped: pads on the ground cannot hold a vehicle down
+    -- against lift, only the spikes can.
+    data.gravityReleased = true
+    TIV.Anchor.ReleaseSprings(veh, data)
 
     -- Gather all live, deployed spikes
     local liveSpikes = {}
@@ -282,31 +278,25 @@ function TIV.Loft.StartDirectionalFailure(veh, data)
         end
     end
 
-    print(string.format("[TIV] Vehicle #%d exceeding threshold. Initiating rapid failure sequence (W1: %d, W2: %d, W3: %d)",
-        entIndex, #wave1, #wave2, #wave3))
+    -- The further over its threshold the vehicle is, the faster the load
+    -- transfers from each torn spike to the next: the cascade is compressed
+    -- by the overshoot (up to 2x at twice the threshold).
+    local threshold = (veh._TIVEffectiveStats and veh._TIVEffectiveStats.effective_loft_mph)
+        or TIV.Config.LoftWindThreshold or 180
+    local overshoot = math.Clamp(TIV.Wind.GetSpeed(veh) / math.max(threshold, 1), 1, 2)
 
-    -- Wave 1: Immediate failure (0.05s)
-    if #wave1 > 0 then
-        timer.Create("TIV_WaveFail_" .. entIndex .. "_1", 0.05, 1, function()
-            if not IsValid(veh) or data.state ~= "anchored" then return end
-            TIV.Loft.FailSpikeList(veh, data, wave1, 0.25)
-        end)
-    end
+    print(string.format("[TIV] Vehicle #%d exceeding threshold (%.2fx). Anchors tearing out windward first (W1: %d, W2: %d, W3: %d)",
+        entIndex, overshoot, #wave1, #wave2, #wave3))
 
-    -- Wave 2: Mid-flank failure (0.35s)
-    if #wave2 > 0 then
-        timer.Create("TIV_WaveFail_" .. entIndex .. "_2", 0.35, 1, function()
-            if not IsValid(veh) or data.state ~= "anchored" then return end
-            TIV.Loft.FailSpikeList(veh, data, wave2, 0.25)
-        end)
-    end
-
-    -- Wave 3: Leeward final failure (0.70s)
-    if #wave3 > 0 then
-        timer.Create("TIV_WaveFail_" .. entIndex .. "_3", 0.70, 1, function()
-            if not IsValid(veh) or data.state ~= "anchored" then return end
-            TIV.Loft.FailSpikeList(veh, data, wave3, 0.25)
-        end)
+    local waves = { { wave1, 0.05 }, { wave2, 0.35 }, { wave3, 0.70 } }
+    for n, w in ipairs(waves) do
+        local list, delay = w[1], w[2]
+        if #list > 0 then
+            timer.Create("TIV_WaveFail_" .. entIndex .. "_" .. n, delay / overshoot, 1, function()
+                if not IsValid(veh) or data.state ~= "anchored" then return end
+                TIV.Loft.FailSpikeList(veh, data, list, 0.25 / overshoot)
+            end)
+        end
     end
 end
 
@@ -360,28 +350,44 @@ function TIV.Loft.TriggerLoft(veh, data)
         phys:EnableMotion(true)
         phys:Wake()
 
-        -- Single initial launch impulse: fling up and downwind with natural tumble
-        local mass      = phys:GetMass()
+        -- The storm gets under the windward side: the lift acts at the
+        -- windward edge of the chassis, not its centre, so the vehicle pitches
+        -- up on that side and rolls downwind (rotation axis wind x up) with
+        -- only a little randomness, instead of a centred fling with a random
+        -- spin.
+        local mass    = phys:GetMass()
+        local windDir = TIV.Wind.GetDirection(veh)
+        if not isvector(windDir) or windDir:LengthSqr() < 0.01 then windDir = veh:GetForward() end
+        windDir = Vector(windDir.x, windDir.y, 0):GetNormalized()
+
+        local mins, maxs = veh:OBBMins(), veh:OBBMaxs()
+        local localWind  = veh:WorldToLocal(veh:GetPos() + windDir)
+        local halfExtent = math.abs(localWind.x) * (maxs.x - mins.x) * 0.5
+                         + math.abs(localWind.y) * (maxs.y - mins.y) * 0.5
+        local windwardEdge = veh:GetPos() - windDir * halfExtent * 0.5
+
         local upForce   = Vector(0, 0, 1) * mass * (TIV.Config.LoftForceMultiplier or 1200)
         local windForce = TIV.Wind.GetForceVector(veh) * mass * 0.65
-        local tumble    = VectorRand() * (TIV.Config.LoftTumbleForce or 350) * mass
+        local rollAxis  = windDir:Cross(Vector(0, 0, 1))
+        local tumble    = (rollAxis + VectorRand() * 0.2):GetNormalized() * (TIV.Config.LoftTumbleForce or 350) * mass
 
-        phys:ApplyForceCenter(upForce + windForce)
+        phys:ApplyForceOffset(upForce, windwardEdge)
+        phys:ApplyForceCenter(windForce)
         phys:ApplyTorqueCenter(tumble)
     end
 
-    -- 4. Release or reparent spikes
+    -- 4. Spikes: torn ones already ride with the chassis at their extension.
+    --    Anything still planted when the vehicle tears free (failsafe paths)
+    --    is pulled out the same way; stowed pistons just stay stowed.
     if ReleaseSpikesOnLoft() then
         if TIV.Spikes.ReleaseAll then
             TIV.Spikes.ReleaseAll(data)
         end
     else
         for _, sd in ipairs(data.spikes or {}) do
-            if IsValid(sd.entity) and TIV.SpikeAnim and TIV.SpikeAnim.ReparentSpike then
-                TIV.SpikeAnim.ReparentSpike(veh, sd.entity, sd)
-                if data.spikeAnims and sd.index then
-                    data.spikeAnims[sd.index] = "idle"
-                end
+            if IsValid(sd.entity) and sd.phase == "deployed" and TIV.SpikeAnim and TIV.SpikeAnim.ReparentSpikeTorn then
+                TIV.SpikeAnim.ReparentSpikeTorn(veh, sd.entity, sd)
+                if data.spikeAnims and sd.index then data.spikeAnims[sd.index] = "torn" end
             end
         end
     end

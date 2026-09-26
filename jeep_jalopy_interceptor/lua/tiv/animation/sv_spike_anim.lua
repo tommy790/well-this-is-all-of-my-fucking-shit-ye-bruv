@@ -218,6 +218,28 @@ function TIV.SpikeAnim.ReparentSpike(veh, spike, spikeData)
     spikeData.plantedPos = nil
 end
 
+-- A spike that has been pulled out of the ground. It is still the vehicle's
+-- piston, so it rides with the chassis again, but at the extension it had
+-- when it tore free: nothing retracts a piston that has lost its footing.
+-- The next retract strokes it home from wherever it is.
+function TIV.SpikeAnim.ReparentSpikeTorn(veh, spike, spikeData)
+    if not IsValid(veh) or not IsValid(spike) then return end
+    local localPos = veh:WorldToLocal(spike:GetPos())
+    local localAng = veh:WorldToLocalAngles(spike:GetAngles())
+    constraint.RemoveAll(spike)
+    TIV.SpikeAnim.ApplyCompatibilityFlags(spike, veh)
+    TIV.SpikeAnim.ApplyVisibility(spike)
+    spike:SetCollisionGroup(COLLISION_GROUP_IN_VEHICLE)
+    spike:SetParent(veh)
+    spike:SetLocalPos(localPos)
+    spike:SetLocalAngles(localAng)
+    StowPhysics(spike)
+    spikeData.phase      = "torn"
+    spikeData.failed     = true
+    spikeData.plantedPos = nil
+    SendPhase(veh, spikeData.index, "torn")
+end
+
 function TIV.SpikeAnim.CreateSpikes(veh, data)
     if not IsValid(veh) then return end
 

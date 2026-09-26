@@ -7,6 +7,7 @@ Nothing teleports or gets frozen in place any more — the vehicle is pulled
 down, held and let go by actual forces and constraints.
 
 **Reworked**
+- Lofting with spikes. Anchors now fail the way ground gives: from the moment the wind exceeds the threshold the storm acts on the chassis, the airbags let go, and the vehicle strains against its spikes; windward spikes are pulled out first and ride with the chassis at the extension they were torn out at (no more popping out of the ground and snapping back into the cylinder), so the freed side lifts and the pistons visibly slide out of the earth while the leeward spikes still hold; the cascade runs faster the further over the threshold the wind is; and when the last spike goes the lift acts at the windward edge and the vehicle rolls downwind instead of being flung straight up with a random spin.
 - Deploying: the vehicle is pulled down onto its suspension by air springs first, then the spikes drive into the ground, then the anchors lock. Retracting runs the same sequence in reverse, with the suspension coming back up smoothly instead of springing up in one jolt.
 - Anchoring: each planted spike now holds the vehicle with a limited pivot joint, so storm forces act on a properly held body and lofting happens when the anchors are actually overloaded.
 - Lofting: when the wind wins, the anchors shear off in waves across all spikes, and the vehicle tumbles with force scaled to its weight.
