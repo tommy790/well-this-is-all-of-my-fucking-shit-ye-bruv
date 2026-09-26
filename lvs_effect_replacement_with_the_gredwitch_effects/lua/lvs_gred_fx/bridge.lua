@@ -14,7 +14,7 @@
       * WantsOriginalThink(name)         — run original Think silently as the
                                            authoritative lifetime/behaviour
                                            oracle (tracers, trails, charge)
-      * Init / Think / Stop / Render     — replacement lifecycle
+      * Init / Think / Stop              — replacement lifecycle
 
     Contract with the wrapper:
       Init returns false  → replacement declined; wrapper runs the original.
@@ -116,7 +116,10 @@ function LVS_GRED_FX.Init(name, self, data)
         return LVS_GRED_FX_TRAILS.InitEntFire(name, self, data)
     end
     if name:find("lvs_ammorack_fire", 1, true) then
-        return LVS_GRED_FX_TRAILS.InitAmmoRack(name, self, data)
+        return LVS_GRED_FX_PERSISTENT.AmmoRack(name, self, data)
+    end
+    if name == "lvs_defence_smoke" then
+        return LVS_GRED_FX_PERSISTENT.SmokeScreen(name, self, data)
     end
     if name == "lvs_laser_charge" then
         return LVS_GRED_FX_TRAILS.InitLaserCharge(name, self, data)
@@ -153,13 +156,9 @@ function LVS_GRED_FX.Stop(name, self)
         LVS_GRED_FX_TRACER.Stop(self)
     end
 
-    if self._psys and IsValid(self._psys) then
+    if LVS_GRED_FX.PsysValid(self._psys) then
         pcall(function() self._psys:StopEmission(false, false) end)
         self._psys = nil
     end
 end
 
-function LVS_GRED_FX.Render(name, self)
-    -- Render is unused: all replacement visuals are particle systems, which
-    -- the engine renders itself.
-end

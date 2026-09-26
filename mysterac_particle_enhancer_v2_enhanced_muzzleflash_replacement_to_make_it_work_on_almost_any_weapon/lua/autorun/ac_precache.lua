@@ -1,33 +1,25 @@
---@diagnostic disable: undefined-global, lowercase-global
-AddCSLuaFile();
+-- MysterAC Particle Enhancer V2
+-- Registers the shipped particle files and loads the shared AC cores
+-- (explosions + muzzleflash). The cores are version-guarded so they can be
+-- shipped by more than one addon.
 
--- Precache
-if SERVER then
-	game.AddParticles("particles/AC_enhancer.pcf")
-	game.AddParticles("particles/impacts_fx.pcf")
-	game.AddParticles("particles/burning_fx.pcf")
-	game.AddParticles("particles/blood_impact.pcf")
-end
+AddCSLuaFile()
+AddCSLuaFile("ac_shared/ac_explosions_core.lua")
+AddCSLuaFile("ac_shared/ac_muzzle_core.lua")
+
+game.AddParticles("particles/ac_enhancer.pcf")
+game.AddParticles("particles/impacts_fx.pcf")
+game.AddParticles("particles/burning_fx.pcf")
+game.AddParticles("particles/blood_impact.pcf")
 
 if CLIENT then
-	game.AddParticles("particles/AC_enhancer.pcf")
-	game.AddParticles("particles/impacts_fx.pcf")
-	game.AddParticles("particles/burning_fx.pcf")
-	game.AddParticles("particles/blood_impact.pcf")
-	PrecacheParticleSystem("impact_concrete")
-	PrecacheParticleSystem("impact_metal")
-	PrecacheParticleSystem("impact_computer")
-	PrecacheParticleSystem("impact_dirt")
-	PrecacheParticleSystem("impact_wood")
-	PrecacheParticleSystem("impact_glass")
-	PrecacheParticleSystem("impact_antlion")
-	PrecacheParticleSystem("AC_grenade_explosion")
-	PrecacheParticleSystem("AC_grenade_explosion_air")
-	PrecacheParticleSystem("AC_rpg_explosion")
-	PrecacheParticleSystem("AC_rpg_explosion_air")
-	PrecacheParticleSystem("AC_muzzle_357")
-	PrecacheParticleSystem("AC_muzzle_ar2")
-	PrecacheParticleSystem("AC_muzzle_pistol")
-	PrecacheParticleSystem("AC_muzzle_shotgun")
-	PrecacheParticleSystem("AC_muzzle_smg")
+    for _, name in ipairs({
+        "impact_concrete", "impact_metal", "impact_computer", "impact_dirt",
+        "impact_wood", "impact_glass", "impact_antlion",
+    }) do
+        PrecacheParticleSystem(name)
+    end
 end
+
+include("ac_shared/ac_explosions_core.lua")
+include("ac_shared/ac_muzzle_core.lua")

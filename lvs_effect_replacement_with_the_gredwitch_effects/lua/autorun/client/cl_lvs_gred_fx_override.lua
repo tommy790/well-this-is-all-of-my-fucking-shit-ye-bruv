@@ -36,20 +36,29 @@ local MODULES = {
     "lvs_gred_fx/config.lua",
     "lvs_gred_fx/debug.lua",
     "lvs_gred_fx/particles.lua",
+    "lvs_gred_fx/weaponcode.lua",
     "lvs_gred_fx/muzzle.lua",
     "lvs_gred_fx/tracer.lua",
     "lvs_gred_fx/muzzleflash.lua",
     "lvs_gred_fx/barrelsmoke.lua",
     "lvs_gred_fx/impacts.lua",
     "lvs_gred_fx/trails.lua",
+    "lvs_gred_fx/persistent.lua",
     "lvs_gred_fx/bridge.lua",
 }
 
+-- Modules are included exactly once per Lua state; re-application passes
+-- (late-registered LVS effects, OnReloaded) only re-wrap effect tables. The
+-- old version re-included every module on each of its five passes, which
+-- recreated timers and reset every module's caches.
+local effectNames
 local function includeModules()
+    if effectNames then return effectNames end
     for _, file in ipairs(MODULES) do
         include(file)
     end
-    return include("lvs_gred_fx/effect_list.lua")
+    effectNames = include("lvs_gred_fx/effect_list.lua")
+    return effectNames
 end
 
 local function isEnabled()
@@ -284,6 +293,10 @@ local function registerOverride(effectName)
 
     captureOriginal(effectName)
 
+    -- Already wrapped and still the active registration: nothing to do.
+    local current = effects.Get and effects.Get(effectName)
+    if istable(current) and current[OVERRIDE_MARKER] then return end
+
     local EFFECT = {}
     EFFECT[OVERRIDE_MARKER] = true
     EFFECT._lvs_gred_effect_name = effectName
@@ -291,6 +304,13 @@ local function registerOverride(effectName)
     function EFFECT:Init(data)
         self._lvs_gred_effect_name = effectName
         self._lvs_gred_fx_handled = false
+
+        -- Low-rate effects get a trace so "nothing printed" can be told
+        -- apart from "never fired" (smoke canisters).
+        if effectName == "lvs_defence_smoke" and LVS_GRED_FX.Config.DebugEnabled() then
+            LVS_GRED_FX.DebugOnce("fired:" .. effectName, "effect fired:", effectName,
+                "origin:", tostring(data.GetOrigin and data:GetOrigin()))
+        end
 
         if not isEnabled() then
             callOriginalInit(effectName, self, data)
@@ -357,14 +377,10 @@ local function registerOverride(effectName)
         return callOriginalThink(effectName, self)
     end
 
+    -- Replacements are particle systems the engine renders itself, so a
+    -- handled effect draws nothing here; only pass-through effects render.
     function EFFECT:Render()
-        if self._lvs_gred_fx_handled and isEnabled() then
-            if LVS_GRED_FX.Render then
-                pcall(LVS_GRED_FX.Render, effectName, self)
-            end
-            return
-        end
-
+        if self._lvs_gred_fx_handled and isEnabled() then return end
         callOriginalRender(effectName, self)
     end
 
@@ -391,11 +407,10 @@ end
 
 hook.Add("InitPostEntity", "lvs_gred_fx_override_effects", applyOverrides)
 hook.Add("OnReloaded", "lvs_gred_fx_override_effects", applyOverrides)
--- Late passes: some LVS/vehicle addons register their effects after the
--- client autorun; late passes ensure our exact-name replacements remain the
--- active registered effects.
+-- Late passes: some vehicle addons register their effects after client
+-- autorun. registerOverride skips names that are already wrapped, so the
+-- passes are cheap.
 timer.Simple(0, applyOverrides)
-timer.Simple(1, applyOverrides)
 timer.Simple(5, applyOverrides)
 
 --[[---------------------------------------------------------------------------

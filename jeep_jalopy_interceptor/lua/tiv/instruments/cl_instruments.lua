@@ -58,10 +58,9 @@ net.Receive("TIV_LoftEvent", function()
         end
     end
 
-    -- Distance-gated dramatic sound + shake (anyone nearby gets it).
+    -- Distance-gated shake (anyone nearby gets it).
     local pos = veh:GetPos()
     if IsValid(lp) and lp:GetPos():DistToSqr(pos) < 2000 * 2000 then
-        surface.PlaySound("ambient/explosions/explode_4.wav")
         util.ScreenShake(pos, 12, 12, 1.5, 2000)
     end
 end)

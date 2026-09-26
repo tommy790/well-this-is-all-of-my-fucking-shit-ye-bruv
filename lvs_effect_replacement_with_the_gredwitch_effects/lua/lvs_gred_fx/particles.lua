@@ -49,12 +49,31 @@ function LVS_GRED_FX.Preload(name)
     return PRECACHED[name]
 end
 
+-- The world entity is what gred's own effects host world particles on, but
+-- on the client the global IsValid() is false for it (it checks IsEntity
+-- and the world fails that), so it is identified by IsWorld() instead.
+-- Checking IsValid here made every handle-based world spawn in this addon
+-- fail silently and fall back to the LVS original (smoke canisters, water
+-- spray, the haubitze beam).
 local function worldHost()
     local w = game.GetWorld()
-    if IsValid(w) then return w end
+    if w and w.IsWorld and w:IsWorld() then return w end
     local z = Entity(0)
-    if IsValid(z) then return z end
+    if z and z.IsWorld and z:IsWorld() then return z end
+    local lp = LocalPlayer()
+    if IsValid(lp) then return lp end
     return nil
+end
+
+-- CNewParticleEffect handles are not entities: the global IsValid() returns
+-- false for them, so every module validates through this helper.
+function LVS_GRED_FX.PsysValid(psys)
+    if not psys or psys == true then return false end
+    if psys.IsValid then
+        local ok, valid = pcall(psys.IsValid, psys)
+        return ok and valid == true
+    end
+    return false
 end
 
 local function SafeStop(psys, clear)
@@ -91,17 +110,160 @@ end
       forceHandle → only use CreateParticleSystem; return nil instead of
                     falling back to handle-less ParticleEffectAttach (used by
                     systems that must track/stop the system, e.g. barrel smoke)
+      offset/offsetAng → origin in the frame's local space: the particle is
+                    driven from the live attachment (attID > 0) or from
+                    frameEnt's transform (attID == 0) every frame
+      frameEnt    → entity whose transform is the frame when attID == 0
 
     Returns: psys handle, `true` (spawned via ParticleEffectAttach), or nil.
 -----------------------------------------------------------------------------]]
+-- Muzzle flash variants locked to their control point (tools/pcf_tool.py
+-- build-muzzle, particles/lvs_gred_muzzle.pcf): gred's Insurgency/DoI flash
+-- PCFs emit world-space particles, which a fast vehicle leaves behind. The
+-- copies follow CP0 -- the barrel point this addon drives -- so the flash
+-- stays on the muzzle at any speed. Used whenever the copy exists.
+local LOCKED_PCF = "particles/lvs_gred_muzzle.pcf"
+game.AddParticles(LOCKED_PCF)
+local LOCKED = {}
+function LVS_GRED_FX.LockedVariant(name)
+    if not isstring(name) then return name end
+    local cached = LOCKED[name]
+    if cached ~= nil then return cached or name end
+    local variant = "lvs_" .. name
+    local ok, res = pcall(PrecacheParticleSystem, variant)
+    LOCKED[name] = (ok and res ~= false) and variant or false
+    return LOCKED[name] or name
+end
+
+-- Offset followers.
+--
+-- Why a proxy entity and not a Lua-driven control point: the engine updates
+-- attachment-followed particles inside its own simulation step, later than
+-- any Lua hook runs, so a control point set from Lua is a frame behind --
+-- seen as a visible trail at 800 u/s in an A/B against PATTACH_POINT_FOLLOW
+-- on the same attachment, which was clean. The same A/B showed gred's
+-- unlocked flash PCFs trailing even on the proxy: the control-point-locked
+-- copies (lvs_gred_muzzle.pcf) are required, not cosmetic. PATTACH_POINT_FOLLOW cannot carry an
+-- offset and orients by the attachment's own axis, so instead a hidden
+-- clientside entity is parented to the vehicle ROOT (a plain parent: a
+-- proxy parented to an attachment is not re-evaluated with bone motion)
+-- and the particle follows that proxy with PATTACH_ABSORIGIN_FOLLOW. The
+-- engine composes the proxy's world transform from the hull's current
+-- transform in its own update, so hull motion is engine-timed and exact;
+-- Lua only sets the proxy's LOCAL pose each frame -- the attachment's
+-- hull-space transform plus the code offset, oriented by the shot -- and
+-- turret/gun motion between frames is sub-unit.
+local FOLLOWERS = {}
+local FOLLOW_GRACE = 5
+
+-- Desired point in the parent's local space.
+local function followerLocalPose(f)
+    local ent = f.ent
+    if not IsValid(ent) then return nil end
+    if f.att > 0 then
+        if ent.SetupBones then ent:SetupBones() end
+        local a = ent:GetAttachment(f.att)
+        if not a or not isvector(a.Pos) then return nil end
+        local attLocalPos = ent:WorldToLocal(a.Pos)
+        local attLocalAng = ent:WorldToLocalAngles(a.Ang)
+        return LocalToWorld(f.offset, f.offsetAng, attLocalPos, attLocalAng)
+    end
+    return f.offset, f.offsetAng
+end
+
+local function driveFollower(f)
+    local pos, ang = followerLocalPose(f)
+    if not pos or not IsValid(f.proxy) then return false end
+    if f.roll then
+        ang = Angle(ang.p, ang.y, ang.r)
+        ang:RotateAroundAxis(ang:Forward(), f.roll)
+    end
+    f.proxy:SetLocalPos(pos)
+    f.proxy:SetLocalAngles(ang)
+    return true
+end
+
+local function dropFollower(i)
+    local f = FOLLOWERS[i]
+    if LVS_GRED_FX.PsysValid(f.psys) then pcall(f.psys.StopEmission, f.psys, false, true) end
+    if IsValid(f.proxy) then f.proxy:Remove() end
+    table.remove(FOLLOWERS, i)
+end
+
+hook.Add("Think", "lvs_gred_fx_followers", function()
+    local now = CurTime()
+    for i = #FOLLOWERS, 1, -1 do
+        local f = FOLLOWERS[i]
+        local alive = now < f.until_ and LVS_GRED_FX.PsysValid(f.psys) and not f.psys:IsFinished()
+            and IsValid(f.ent) and IsValid(f.proxy)
+        if not alive then dropFollower(i) end
+    end
+end)
+
+local function driveAll()
+    for i = #FOLLOWERS, 1, -1 do
+        local f = FOLLOWERS[i]
+        if IsValid(f.proxy) and IsValid(f.ent) then driveFollower(f) end
+    end
+end
+hook.Add("PreRender", "lvs_gred_fx_followers_pose", driveAll)
+hook.Add("PreDrawTranslucentRenderables", "lvs_gred_fx_followers_pose", function(_, isDrawingSkybox)
+    if isDrawingSkybox then return end
+    driveAll()
+end)
+
+hook.Add("ShutDown", "lvs_gred_fx_followers_cleanup", function()
+    for i = #FOLLOWERS, 1, -1 do dropFollower(i) end
+end)
+
+local function spawnFollower(name, ent, attID, opts)
+    local f = {
+        ent = (attID == 0 and IsValid(opts.frameEnt)) and opts.frameEnt or ent,
+        att = attID or 0,
+        offset = opts.offset,
+        offsetAng = isangle(opts.offsetAng) and opts.offsetAng or angle_zero,
+        roll = opts.roll,
+        until_ = CurTime() + (opts.life or 1) + FOLLOW_GRACE,
+    }
+    local proxy = ClientsideModel("models/error.mdl", RENDERGROUP_OTHER)
+    if not IsValid(proxy) then return nil end
+    proxy:SetNoDraw(true)
+    proxy:DrawShadow(false)
+    proxy:SetParent(f.ent)
+    f.proxy = proxy
+    if not driveFollower(f) then proxy:Remove() return nil end
+
+    local ok, psys = pcall(CreateParticleSystem, proxy, name, PATTACH_ABSORIGIN_FOLLOW, 0, vector_origin)
+    if not ok or not LVS_GRED_FX.PsysValid(psys) then proxy:Remove() return nil end
+    f.psys = psys
+    FOLLOWERS[#FOLLOWERS + 1] = f
+    if opts.life then LVS_GRED_FX.StopAfter(psys, opts.life, opts.clear) end
+    if cfg.DebugEnabled() then
+        Debug(f.att > 0 and "follow attachment + offset:" or "follow entity frame:", name,
+            "ent:", f.ent:GetClass(), "att:", f.att,
+            "name:", f.att > 0 and LVS_GRED_FX.AttachmentName(ent, f.att) or "-",
+            "offset:", tostring(opts.offset), "this shot:", tostring(opts.offsetShot or opts.offset))
+    end
+    return psys
+end
+
 function LVS_GRED_FX.SpawnAttached(name, ent, attID, opts)
     if not cfg.Enabled() or not isstring(name) then return nil end
-    if not IsValid(ent) or not attID or attID <= 0 then return nil end
+    if not IsValid(ent) then return nil end
+    opts = opts or {}
+    attID = attID or 0
+
+    if isvector(opts.offset) then
+        if not LVS_GRED_FX.Preload(name) then return nil end
+        local psys = spawnFollower(name, ent, attID, opts)
+        if psys or attID <= 0 then return psys end
+        -- Could not build the proxy: attach to the attachment itself below.
+    end
+
+    if attID <= 0 then return nil end
     if not LVS_GRED_FX.Preload(name) then return nil end
     if not ent.GetAttachment then return nil end
     if not ent:GetAttachment(attID) then return nil end
-
-    opts = opts or {}
 
     local ok, psys = pcall(CreateParticleSystem, ent, name, PPF, attID, vector_origin)
 
@@ -121,9 +283,8 @@ function LVS_GRED_FX.SpawnAttached(name, ent, attID, opts)
         end
 
         if cfg.DebugEnabled() then
-            local attData = ent:GetAttachment(attID)
             Debug("PATTACH_POINT_FOLLOW:", name, "ent:", ent:GetClass(),
-                "att:", attID, "attName:", attData and attData.Name or "?")
+                "att:", attID, "name:", LVS_GRED_FX.AttachmentName(ent, attID))
         end
 
         return psys

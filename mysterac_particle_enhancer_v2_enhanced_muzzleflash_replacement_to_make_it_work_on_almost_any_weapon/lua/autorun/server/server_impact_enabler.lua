@@ -1,4 +1,0 @@
---@diagnostic disable: undefined-global, lowercase-global
--- Nothing to do here: cl_new_impact_effects is a CLIENT-side cvar, so it
--- cannot be set from the server console. It is handled in
--- lua/autorun/client/client_impact_enabler.lua instead.

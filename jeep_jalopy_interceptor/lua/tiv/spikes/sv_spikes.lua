@@ -213,6 +213,7 @@ function TIV.Spikes.ReleaseAll(data)
         if IsValid(spikeData.entity) then
             constraint.RemoveAll(spikeData.entity)
             spikeData.entity:SetParent(nil)
+            spikeData.entity:SetMoveType(MOVETYPE_VPHYSICS)
             local phys = spikeData.entity:GetPhysicsObject()
             if IsValid(phys) then
                 phys:EnableMotion(true)

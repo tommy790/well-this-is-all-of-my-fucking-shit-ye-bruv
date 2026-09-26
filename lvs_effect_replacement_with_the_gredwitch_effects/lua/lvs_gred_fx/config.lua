@@ -54,8 +54,10 @@ C.TracerDefaults = { color = "white", caliber = "20mm", muzzle = "muzzleflash_ba
     Tracer mapping — the single source of truth for tracer replacement.
 
     Each LVS tracer maps to:
-      color   → gred tracer beam color (gred_tracers_<color>_<caliber>)
-      caliber → gred caliber (also drives impact severity)
+      color   → gred tracer color (lvs_gred_tracers_<color>_<caliber>)
+      caliber → gred caliber: drives impact severity and the tracer's smoke/
+                glow children (7mm white/yellow have no glow); the tracer's
+                speed and drop come from the LVS round, not the caliber
       muzzle  → preferred muzzle flash PCF when this tracer fired
       smoke   → optional barrel smoke PCF after firing
 -----------------------------------------------------------------------------]]
@@ -129,6 +131,10 @@ C.MuzzleRollFixByClass = {
 C.FlashLife        = 0.35  -- small arms / MG muzzle flash
 C.ArtilleryLife    = 0.6   -- cannon / haubitze muzzle flash
 C.SmokeLife        = 2.5   -- barrel smoke
+-- Per-PCF emission length overrides (cut-off, not hand-off: chained smoke
+-- advances when the running system reports IsFinished, this only bounds
+-- PCFs that would otherwise loop forever).
+C.SmokeLifeByPcf   = {}
 C.SmokeThrottle    = 0.35  -- min seconds between new smoke systems of the same
                            -- type per entity (rapid fire would otherwise stack)
 C.ChargeLife       = 0.35  -- laser charge duration (matches LVS)
@@ -190,11 +196,6 @@ C.WaterByEffect = {
 }
 
 C.ScrapePcf       = "muzzleflash_sparks_variant_6"
--- Continuous smoke cloud for smoke canisters (lvs_defence_smoke). The old
--- m203_smokegrenade was a one-shot puff, throttled so hard it looked like
--- nothing. doi_smoke_artillery is gred-precached, 0 missing materials, and a
--- continuous emitter — right for a canister that keeps re-firing.
-C.DefenceSmokePcf = "doi_smoke_artillery"
 C.StompDustPcf    = "doi_ceilingDust_large"
 C.RotorExplosionPcf = "high_explosive_air_2"
 
@@ -215,6 +216,17 @@ C.EntFirePcf = {
 }
 
 C.AmmoRackPcf = "flame_jet"
+
+-- Defence smoke canister (lvs_item_smoke): one gred emitter per LVS call
+-- (every 0.2 s while the canister lives), each stopped after
+-- SmokeScreenEmitTime seconds. smokegrenade_b is gred's continuous
+-- smoke-grenade emitter (5 puffs/s, radius 70-85, puff life 3-5 s).
+C.SmokeScreenPcf      = "smokegrenade_b"
+C.SmokeScreenEmitTime = 2.5
+
+-- Water spray from hulls/wheels (lvs_hover_water & co.) is fired every
+-- tick per contact point; one live system per contact slot at a time.
+C.WaterSlotDist = 48
 
 -- Name of the cvar gated "barrel smoke" toggle (used by the menu).
 C.SmokeCvarName = "lvs_gred_fx_barrel_smoke"

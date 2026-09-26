@@ -1,14 +1,14 @@
 --[[---------------------------------------------------------------------------
     LVS → Gredwitch FX : server tracer relay (server-side)
 
-    THE PROVEN TRACER MECHANISM (restored from the original addon):
+    Clients running this addon draw the Gredwitch tracer themselves, on the
+    LVS bullet object, so it follows LVS's speed and drop (tracer.lua). They
+    announce themselves once (lvs_gred_fx_client) and are excluded here.
 
-    Rendering is delegated to Gredwitch's OWN base. After every mapped LVS
-    shot, this module sends gred's own net message (gred_net_createtracer),
-    which gred's client base renders with its own battle-tested
-    gred_particle_tracer effect — the exact same path gred's tanks use. The
-    addon itself never creates a tracer particle system, so there is nothing
-    here that can fail to render.
+    For every other client that has the Gredwitch base, this relay still
+    sends gred's own gred_net_createtracer after each mapped LVS shot, so
+    they at least get the straight gred beam that gred's tanks use, using
+    the gred definition whose baked-in speed is closest to the round's.
 
       * LVS:FireBullet is called UNCHANGED first — damage, ballistics,
         projectile physics, networking and firing mechanics are untouched,
@@ -18,15 +18,24 @@
         purely for the visual; it never feeds back into LVS,
       * the whole relay is pcall-guarded so a failure can never break LVS
         firing or the weapon that called it.
-
-    Clients with this addon suppress the original LVS tracer visual (see
-    tracer.lua), so the gred beam is the single tracer. Clients without this
-    addon but with gred base will also render the beam (gred owns the channel).
 -----------------------------------------------------------------------------]]
 
 if not SERVER then return end
 
 LVS_GRED_FX_SV = LVS_GRED_FX_SV or {}
+
+util.AddNetworkString("lvs_gred_fx_client")
+
+-- Players whose client draws the tracer itself.
+LVS_GRED_FX_SV.SelfDrawing = LVS_GRED_FX_SV.SelfDrawing or {}
+
+net.Receive("lvs_gred_fx_client", function(_, ply)
+    if IsValid(ply) then LVS_GRED_FX_SV.SelfDrawing[ply] = true end
+end)
+
+hook.Add("PlayerDisconnected", "lvs_gred_fx_client_forget", function(ply)
+    LVS_GRED_FX_SV.SelfDrawing[ply] = nil
+end)
 
 -- Mirror of the client config mapping (the client config is client-only).
 local TRACER_MAP = {
@@ -60,6 +69,29 @@ local COL_TABLE = {
     ["red"] = 1, ["green"] = 2, ["white"] = 3, ["yellow"] = 4,
 }
 
+-- Launch speed baked into each gred_tracers_<color>_<caliber> definition
+-- (gred_particles.pcf, "move particles between 2 control points"). Within a
+-- colour the five caliber definitions differ ONLY in this speed (white and
+-- yellow 7mm additionally lack the glow child), so the caliber index is in
+-- effect a speed selector: the definition whose speed is closest to the
+-- LVS round's Velocity is sent.
+local PCF_SPEED = {
+    default = { [1] = 95000, [2] = 89000, [3] = 70250, [4] = 54890, [5] = 46240 },
+    red     = { [1] = 95000, [2] = 89000, [3] = 36000, [4] = 54890, [5] = 46240 },
+}
+
+local function CaliberForSpeed(color, velocity)
+    local speeds = PCF_SPEED[color] or PCF_SPEED.default
+    local best, bestErr
+    for calID, speed in pairs(speeds) do
+        local err = math.abs(speed - velocity)
+        if not bestErr or err < bestErr then
+            best, bestErr = calID, err
+        end
+    end
+    return best
+end
+
 -- Match LVS's own spread application so the beam lines up with the shot.
 local function ApplySpread(dir, spreadVec)
     if not spreadVec or spreadVec:LengthSqr() <= 0 then return dir end
@@ -81,10 +113,12 @@ local function ComputeEndpoint(pos, dir, velocity, enableBallistics, filter)
     end
 
     local grav = physenv.GetGravity() or Vector(0, 0, -600)
+    -- 24 arc segments is enough for a visual endpoint; the old 48 doubled the
+    -- trace cost for every ballistic MG round.
     local t, dt = 0, math.min(99999 / speed / 24, 0.25)
     local prev = pos
 
-    for i = 1, 48 do
+    for i = 1, 24 do
         t = t + dt
         local cur = pos + dir * speed * t + grav * (t * t * 0.5)
         local tr = util.TraceLine({ start = prev, endpos = cur, filter = filter, mask = mask })
@@ -108,7 +142,13 @@ function LVS_GRED_FX_SV.SendTracer(data)
     if not gred then return end
 
     local color, caliber = mapping[1], mapping[2]
-    local calID, colID = CAL_TABLE["wac_base_" .. caliber], COL_TABLE[color]
+    local colID = COL_TABLE[color]
+    local calID
+    if isnumber(data.Velocity) and data.Velocity > 0 then
+        calID = CaliberForSpeed(color, data.Velocity)
+    else
+        calID = CAL_TABLE["wac_base_" .. caliber]
+    end
     if not calID or not colID then return end
 
     local pos = data.Src
@@ -121,6 +161,15 @@ function LVS_GRED_FX_SV.SendTracer(data)
         filter = filter:GetCrosshairFilterEnts()
     end
 
+    -- Only clients who can see the shot (as LVS's own bullet networking
+    -- does) and who do not draw the tracer themselves.
+    local rf = RecipientFilter()
+    rf:AddPVS(pos)
+    for ply in pairs(LVS_GRED_FX_SV.SelfDrawing) do
+        if IsValid(ply) then rf:RemovePlayer(ply) else LVS_GRED_FX_SV.SelfDrawing[ply] = nil end
+    end
+    if rf:GetCount() == 0 then return end
+
     local endpos = ComputeEndpoint(pos, dir, data.Velocity, data.EnableBallistics == true, filter)
     if not isvector(endpos) then return end
 
@@ -129,25 +178,36 @@ function LVS_GRED_FX_SV.SendTracer(data)
         net.WriteUInt(calID, 3)
         net.WriteUInt(colID, 3)
         net.WriteVector(endpos)
-
-    -- Only send to clients who can actually see the shot (same as LVS's own
-    -- bullet networking) — net.Broadcast would push every tracer to every
-    -- player, wasting bandwidth with many vehicles firing in multiplayer.
-    net.SendPVS(pos)
+    net.Send(rf)
 end
 
 local function TryOverrideFireBullet()
     if not LVS or not LVS.FireBullet then
-        timer.Simple(0.5, TryOverrideFireBullet)
+        -- LVS not mounted yet; poll a few times instead of forever.
+        LVS_GRED_FX_SV._retries = (LVS_GRED_FX_SV._retries or 0) + 1
+        if LVS_GRED_FX_SV._retries <= 20 then
+            timer.Simple(0.5, TryOverrideFireBullet)
+        end
         return
     end
 
-    if LVS_GRED_FX_SV._patched then return end
-    LVS_GRED_FX_SV._patched = true
+    -- Guard against double wrapping across autorefresh: the original is kept
+    -- from the first patch, so a reload re-wraps the original, not our wrapper.
+    if LVS.FireBullet == LVS_GRED_FX_SV._wrapper then return end
+    if not LVS_GRED_FX_SV._originalFireBullet or LVS.FireBullet ~= LVS_GRED_FX_SV._wrapper then
+        LVS_GRED_FX_SV._originalFireBullet = LVS.FireBullet
+    end
 
-    LVS_GRED_FX_SV._originalFireBullet = LVS.FireBullet
+    -- Only useful when the Gredwitch base owns the tracer net channel.
+    if not gred then
+        if not LVS_GRED_FX_SV._warnedNoGred then
+            LVS_GRED_FX_SV._warnedNoGred = true
+            print("[lvs_gred_fx] Gredwitch base not found on the server; no fallback beam for clients without this addon.")
+        end
+        return
+    end
 
-    function LVS:FireBullet(data)
+    LVS_GRED_FX_SV._wrapper = function(self, data)
         -- Run the real LVS bullet logic untouched (damage/ballistics/network).
         LVS_GRED_FX_SV._originalFireBullet(self, data)
 
@@ -159,6 +219,8 @@ local function TryOverrideFireBullet()
             ErrorNoHalt("[lvs_gred_fx] server tracer relay failed\n")
         end
     end
+    LVS.FireBullet = LVS_GRED_FX_SV._wrapper
+    LVS_GRED_FX_SV._patched = true
 end
 
 hook.Add("InitPostEntity", "lvs_gred_fx_server_tracer", TryOverrideFireBullet)

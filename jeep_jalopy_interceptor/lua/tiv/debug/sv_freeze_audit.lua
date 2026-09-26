@@ -178,7 +178,9 @@ function TIV.Debug.WatchdogVehicle(entIndex, data)
         phys:EnableGravity(true)
         fixed[#fixed + 1] = "gravity restored"
     end
-    if not phys:IsMotionEnabled() then
+    -- Only undo motion this addon itself disabled; a physgun freeze (or any
+    -- other addon's freeze) is the player's business.
+    if not phys:IsMotionEnabled() and not veh.TIV_PlayerFrozen then
         phys:EnableMotion(true)
         phys:Wake()
         fixed[#fixed + 1] = "motion restored"
@@ -199,6 +201,22 @@ function TIV.Debug.WatchdogVehicle(entIndex, data)
     end
     return false
 end
+
+local function IsTIVVehicle(ent)
+    return IsValid(ent) and TIV.Deploy and TIV.Deploy.Vehicles[ent:EntIndex()] ~= nil
+end
+
+hook.Add("OnPhysgunFreeze", "TIV_MarkPlayerFreeze", function(_, phys, ent)
+    if IsTIVVehicle(ent) then ent.TIV_PlayerFrozen = true end
+end)
+
+hook.Add("PlayerUnfrozeObject", "TIV_ClearPlayerFreeze", function(_, ent)
+    if IsTIVVehicle(ent) then ent.TIV_PlayerFrozen = nil end
+end)
+
+hook.Add("PhysgunPickup", "TIV_ClearPlayerFreezeOnPickup", function(_, ent)
+    if IsTIVVehicle(ent) then ent.TIV_PlayerFrozen = nil end
+end)
 
 -- ----------------------------------------------------------------------------
 -- THINK

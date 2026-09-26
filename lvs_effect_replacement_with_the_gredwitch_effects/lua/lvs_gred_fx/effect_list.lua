@@ -45,7 +45,7 @@ return {
     "lvs_missiletrail",
     "lvs_proton_trail",
 
-    -- Smoke / exhaust
+    -- Smoke canister
     "lvs_defence_smoke",
 
     -- Physics (scrape, water, etc.)
