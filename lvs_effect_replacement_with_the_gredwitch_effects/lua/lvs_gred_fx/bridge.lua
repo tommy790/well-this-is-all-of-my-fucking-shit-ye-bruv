@@ -14,7 +14,7 @@
       * WantsOriginalThink(name)         — run original Think silently as the
                                            authoritative lifetime/behaviour
                                            oracle (tracers, trails, charge)
-      * Init / Think / Stop / Render     — replacement lifecycle
+      * Init / Think / Stop              — replacement lifecycle
 
     Contract with the wrapper:
       Init returns false  → replacement declined; wrapper runs the original.
@@ -162,7 +162,3 @@ function LVS_GRED_FX.Stop(name, self)
     end
 end
 
-function LVS_GRED_FX.Render(name, self)
-    -- Render is unused: all replacement visuals are particle systems, which
-    -- the engine renders itself.
-end

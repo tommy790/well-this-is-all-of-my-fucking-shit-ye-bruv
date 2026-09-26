@@ -89,6 +89,20 @@ stacking wrappers; particle systems used after being freed (crash on map change)
 `LVS_GRED_FX.PsysValid` (owned by `particles.lua`) and guarded the client override and
 `sv_tracer` with it; patching is now idempotent via a marker on the original function.
 
+**Later changes (in-game testing):**
+- Muzzle attachment resolver: the weapon → attachment relationship is read from the
+  vehicle's own LVS weapon code (`weaponcode.lua`, source or bytecode) and accepted only
+  when the attachment lies on the shot's barrel line, so twin/quad guns flash from the
+  right barrel; geometric barrel-axis matching is the fallback, never name guessing.
+- Persistent LVS effects (ammo-rack fire, defence smoke) are one particle system each,
+  kept alive exactly as long as LVS keeps sending the effect (`persistent.lua`).
+- Tracers: `particles/lvs_gred_tracers.pcf`, generated from gred's tracer definitions
+  by `tools/pcf_tool.py`, launches the gred tracer particle at the LVS round's own
+  velocity (previous-position remap on control point 1; engine-verified first-frame
+  dt of 0.05 s) with gravity matched to LVS ballistic flight. Clients announce
+  themselves (`lvs_gred_fx_client`); the server relay sends gred's straight beam only
+  to clients without the addon, picking the definition with the nearest baked-in speed.
+
 **Dependencies:** requires `LVS` and Gredwitch's `gred` global (unchanged).
 
 ---
@@ -135,9 +149,9 @@ nets (`TIV_DeployRequest`, `TIV_DeployStatus`, `TIV_SpikeAnim*`, `TIV_LoftEvent`
 - Lowering used to `SetPos`-lerp the chassis every tick with motion frozen, which is
   the fake-movement approach that produced the jitter/teleport instability. Now the
   chassis is never frozen or moved by code. Airbags go first: `constraint.Elastic`
-  springs from each spike mount (or four chassis corners when no spikes are fitted) to
-  the ground directly below, whose rest length is shortened over `LowerTime`
-  (`data.pullDown`). The suspension compresses under a physical pull, then the spikes
+  springs from every mount of the vehicle's spike layout (whatever number of spikes is
+  fitted) to a point below the ground under it, whose rest length is shortened over
+  `LowerTime` (`data.pullDown`). The suspension compresses under a physical pull, then the spikes
   drive in from the lowered pose, the ballsockets lock, and the springs are released.
   Retract mirrors it: springs hold the pose while the pistons withdraw, then
   `RaiseVehicle` drops everything and the suspension comes back up on its own.
@@ -184,6 +198,18 @@ was folded into the 0.05s loft timer.
   NoCollide and tear out.
 - `IsValid(game.GetWorld())` is false in GMod; the springs were never created until the
   world-entity check was removed.
+
+- Airbags are independent of the spike count (all layout mounts; springs at mounts
+  without a spike stay through the anchored state), the spring's ground end sits below
+  the surface by the full stroke so mounts at ground level have the whole travel, and
+  the ground trace accepts a surface above a pulled-down mount (the raise springs were
+  otherwise never created on retract and the vehicle snapped up).
+- Loft with spikes is physical: from the threshold on `data.gravityReleased` lets the
+  storm push the chassis, springs are dropped, spikes tear out windward first and ride
+  on at their extension (`SpikeAnim.ReparentSpikeTorn`), the cascade compresses with
+  overshoot, lift is applied at the windward edge with a downwind roll, and the post-loft
+  reset strokes surviving pistons home (`SpikeAnim.StowAll`) instead of deleting them.
+- Visual anchor rocking and the loft explosion sound were removed at the user's request.
 
 **Compat considerations:** `sv_wire` emergency release, `sv_freeze_audit` watchdog,
 `sv_custom_components` armor NoCollides and `E2 tiv.lua` were checked against the new

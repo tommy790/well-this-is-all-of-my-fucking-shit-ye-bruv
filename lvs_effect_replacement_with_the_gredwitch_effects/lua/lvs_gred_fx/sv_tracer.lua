@@ -7,7 +7,8 @@
 
     For every other client that has the Gredwitch base, this relay still
     sends gred's own gred_net_createtracer after each mapped LVS shot, so
-    they at least get the straight gred beam that gred's tanks use.
+    they at least get the straight gred beam that gred's tanks use, using
+    the gred definition whose baked-in speed is closest to the round's.
 
       * LVS:FireBullet is called UNCHANGED first — damage, ballistics,
         projectile physics, networking and firing mechanics are untouched,
@@ -201,7 +202,7 @@ local function TryOverrideFireBullet()
     if not gred then
         if not LVS_GRED_FX_SV._warnedNoGred then
             LVS_GRED_FX_SV._warnedNoGred = true
-            print("[lvs_gred_fx] Gredwitch base not found on the server; LVS tracers keep their native visual.")
+            print("[lvs_gred_fx] Gredwitch base not found on the server; no fallback beam for clients without this addon.")
         end
         return
     end

@@ -370,14 +370,10 @@ local function registerOverride(effectName)
         return callOriginalThink(effectName, self)
     end
 
+    -- Replacements are particle systems the engine renders itself, so a
+    -- handled effect draws nothing here; only pass-through effects render.
     function EFFECT:Render()
-        if self._lvs_gred_fx_handled and isEnabled() then
-            if LVS_GRED_FX.Render then
-                pcall(LVS_GRED_FX.Render, effectName, self)
-            end
-            return
-        end
-
+        if self._lvs_gred_fx_handled and isEnabled() then return end
         callOriginalRender(effectName, self)
     end
 

@@ -5,13 +5,15 @@
 --
 --   Plant   : a spike that has reached its drive depth becomes a static body
 --             (motion disabled) -- it is now part of the world.
---   Pull-down: elastic constraints from the chassis mounts to the planted
---             spikes are shortened over LowerTime. The chassis is pulled down
---             onto its own suspension by real constraint force; the raycast
---             wheels compress exactly as far as the suspension allows.
---   Lock    : limited ballsockets between chassis and spikes hold the pulled
---             down pose. Force limit 0 means the loft system is the only
---             thing that ever breaks them.
+--   Pull-down: elastic constraints from every layout mount to a point below
+--             the ground under it are shortened over LowerTime. The chassis is
+--             pulled down onto its own suspension by real constraint force;
+--             the raycast wheels compress exactly as far as the suspension
+--             allows. Independent of how many spikes are fitted.
+--   Lock    : limited ballsockets between chassis and planted spikes hold the
+--             pulled-down pose (world sockets when no spikes are fitted).
+--             Springs at mounts without a spike stay on. Force limit 0 means
+--             the loft system is the only thing that ever breaks them.
 --
 -- The chassis physics object is never frozen, never teleported and keeps its
 -- gravity throughout. Releasing the constraints is what raises the vehicle:

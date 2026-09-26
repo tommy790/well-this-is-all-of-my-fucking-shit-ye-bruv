@@ -5,14 +5,17 @@
 --
 --   idle -> lowering -> deploying_spikes -> anchored
 --   anchored -> retracting -> raising -> idle
+--   anchored -> lofted -> idle            (sv_loft.lua)
 --
---   lowering         : springs from the chassis mounts to the ground shorten;
---                      the chassis is pulled onto its suspension by real force
+--   lowering         : airbag springs at every layout mount shorten; the
+--                      chassis is pulled onto its suspension by real force
 --   deploying_spikes : hydraulic pistons stroke down from the lowered pose and
---                      plant in the ground
---   anchored         : limited ballsockets lock the settled pose, springs go
+--                      plant in the ground (none fitted: wait until the
+--                      chassis is at rest on the springs)
+--   anchored         : limited ballsockets lock the settled pose; springs at
+--                      mounts a spike holds go, the others stay
 --   retracting       : springs hold the pose while the pistons withdraw
---   raising          : everything released, suspension rebounds on its own
+--   raising          : springs let out over LowerTime, suspension rebounds
 --
 -- The chassis physics object is a live body in every state. Nothing here
 -- calls SetPos or EnableMotion(false) on the vehicle.

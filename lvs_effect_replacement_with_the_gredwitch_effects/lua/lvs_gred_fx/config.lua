@@ -54,8 +54,10 @@ C.TracerDefaults = { color = "white", caliber = "20mm", muzzle = "muzzleflash_ba
     Tracer mapping — the single source of truth for tracer replacement.
 
     Each LVS tracer maps to:
-      color   → gred tracer beam color (gred_tracers_<color>_<caliber>)
-      caliber → gred caliber (also drives impact severity)
+      color   → gred tracer color (lvs_gred_tracers_<color>_<caliber>)
+      caliber → gred caliber: drives impact severity and the tracer's smoke/
+                glow children (7mm white/yellow have no glow); the tracer's
+                speed and drop come from the LVS round, not the caliber
       muzzle  → preferred muzzle flash PCF when this tracer fired
       smoke   → optional barrel smoke PCF after firing
 -----------------------------------------------------------------------------]]

@@ -23,6 +23,10 @@
       * lifetime 5 s (LVS's cap); two variants: "<name>" whose Movement
         Basic gravity is (0,0,-1200) and "<name>_flat" with none.
 
+    Within a colour the generated caliber variants differ only in their
+    children (gred's white and yellow 7mm have no glow); the caliber from
+    the config picks the variant, speed and drop always come from LVS.
+
     Why -1200: LVS flies EnableBallistics rounds as Src + Dir*V*t + g*t^2
     with g = physenv.GetGravity() (-600 at default sv_gravity), so the
     round's acceleration is 2g. The particle integrates the same motion,

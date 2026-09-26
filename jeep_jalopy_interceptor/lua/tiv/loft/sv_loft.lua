@@ -1,11 +1,18 @@
 -- ============================================================================
 -- TIV LOFT SYSTEM
--- Clean, Rock-Solid Physics Architecture:
--- 1. Rock-Solid Ground Planting (Zero artificial forces while anchored)
--- 2. External Tornado Mod Immunity while Anchored (GStorms & XT3 cannot suction/teleport vehicle)
--- 3. Instant Displacement Failsafe (If chassis moves > 40u from ground, triggers immediate loft)
--- 4. Directional Anchor Shearing (Rapid, dramatic sequential failure without canceling on wind dips)
--- 5. Clean Single-Impulse Loft (Natural Source gravity & storm physics handle flight; no mid-air traps)
+-- ============================================================================
+--   Anchored : no artificial forces on the chassis; storm mods are told to
+--              leave it alone (SetAnchoredImmunity). Stress feedback only.
+--   Failing  : once the wind passes the threshold the storm acts on the
+--              chassis (data.gravityReleased lets sv_wind push it), the airbag
+--              springs are dropped and the spikes tear out of the ground
+--              windward first, each riding on at the extension it had. The
+--              cascade runs faster the further over the threshold the wind is.
+--   Loft     : when the last spike goes (or the chassis has already lifted
+--              40 u) the hold is severed, lift is applied at the windward edge
+--              with a downwind roll, and gravity plus the storm do the rest.
+--   Reset    : 15 s later the pistons still aboard stroke home, lost ones are
+--              replaced and the vehicle is idle.
 -- ============================================================================
 
 TIV.Loft = TIV.Loft or {}
@@ -582,4 +589,4 @@ end)
 -- ============================================================================
 
 
-print("[TIV] Clean 5-Stage Loft system loaded")
+print("[TIV] Loft system loaded")
