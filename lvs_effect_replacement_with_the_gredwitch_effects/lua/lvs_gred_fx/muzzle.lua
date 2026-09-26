@@ -494,7 +494,10 @@ local function resolveImpl(ent, muzzlePos, dir, code, frameEnt)
                     local along = v:Dot(dir)
                     local perp = (v - dir * along):Length()
                     info.perp = perp
-                    onPoint = perp <= AXIS_PERP_MAX and along >= 0 and along <= AXIS_ALONG_MAX
+                    -- On the point: within the sideways tolerance, from a
+                    -- hair ahead of the tip (Willys MG: 0.06 u) back to a
+                    -- recoiled origin behind it.
+                    onPoint = perp <= AXIS_PERP_MAX and along >= -AXIS_PERP_MAX and along <= AXIS_ALONG_MAX
                 end
                 if not onPoint then
                     info.method = "weapon_code_offset"
