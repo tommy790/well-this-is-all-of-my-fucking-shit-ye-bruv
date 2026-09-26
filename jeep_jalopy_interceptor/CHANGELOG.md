@@ -7,6 +7,7 @@ Nothing teleports or gets frozen in place any more — the vehicle is pulled
 down, held and let go by actual forces and constraints.
 
 **Reworked**
+- Anchor failure and loft: a failing anchor is now the mount shearing off the spike, not the spike popping out of the ground. Failed spikes stay planted where they were, the remaining spikes carry the load, and when the last one goes the vehicle tears away from the spikes and leaves them in the ground until the post-loft reset mounts fresh ones. Previously each failed spike jumped out of the ground and snapped back into its cylinder.
 - Deploying: the vehicle is pulled down onto its suspension by air springs first, then the spikes drive into the ground, then the anchors lock. Retracting runs the same sequence in reverse, with the suspension coming back up smoothly instead of springing up in one jolt.
 - Anchoring: each planted spike now holds the vehicle with a limited pivot joint, so storm forces act on a properly held body and lofting happens when the anchors are actually overloaded.
 - Lofting: when the wind wins, the anchors shear off in waves across all spikes, and the vehicle tumbles with force scaled to its weight.

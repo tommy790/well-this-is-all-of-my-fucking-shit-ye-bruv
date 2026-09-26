@@ -459,12 +459,16 @@ function TIV.Anchor.ReleaseHold(veh, data)
     if IsValid(veh) then TIV.Anchor.UnfreezeForDeploy(veh) end
 end
 
+-- An anchor failing is the MOUNT letting go of the spike, not the spike
+-- letting go of the ground: only the hold (ballsocket) is severed. The
+-- ground weld and the chassis nocollide stay, so the spike remains planted
+-- where it was and the vehicle tears away from it.
 function TIV.Anchor.BreakSpike(veh, data, spikeIndex)
     if not data.constraints then return false end
     local broke = false
     for i = #data.constraints, 1, -1 do
         local c = data.constraints[i]
-        if c.spikeIndex == spikeIndex and c.type ~= "nocollide" then
+        if c.spikeIndex == spikeIndex and c.type == "ballsocket" then
             if IsValid(c.constraint) then c.constraint:Remove() end
             table.remove(data.constraints, i)
             broke = true
