@@ -139,10 +139,13 @@ local function MountPoints(veh, data)
     }
 end
 
--- Ground under a mount. Starts the trace a little above the mount so a
--- mount that is already touching a slope does not start solid and lose its
--- spring; a hit above the mount can only be the vehicle itself and is ignored.
-local TRACE_LIFT = 16
+-- Ground surface at a mount's x/y. The spike mounts sit at the chassis
+-- origin, i.e. at ground level on a jeep at ride height and BELOW the
+-- surface once the vehicle has been pulled down, so the trace starts well
+-- above the mount and the surface may legitimately be above it. The vehicle
+-- and everything it carries are excluded by the filter, so whatever the
+-- trace hits is ground.
+local TRACE_LIFT = 48
 local function GroundUnder(mountWorld, filter)
     local tr = util.TraceLine({
         start  = mountWorld + Vector(0, 0, TRACE_LIFT),
@@ -151,7 +154,6 @@ local function GroundUnder(mountWorld, filter)
         mask   = MASK_SOLID,
     })
     if not tr.Hit or tr.StartSolid then return nil end
-    if tr.HitPos.z > mountWorld.z + 0.5 then return nil end
     return tr.HitPos
 end
 

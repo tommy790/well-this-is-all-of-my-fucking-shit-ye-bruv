@@ -17,6 +17,7 @@ down, held and let go by actual forces and constraints.
 - Physgun-frozen vehicles are respected: deploy is refused while frozen and the addon no longer unfreezes your props.
 
 **Fixed**
+- Fixed the vehicle snapping straight up when undeploying with no spikes fitted (and any retract where the mounts had gone below the surface): the springs that let the suspension back up at hydraulic speed were never created, because the ground trace refused a surface that was above the pulled-down mount. The retract now rises over the same time the airbag stage took to lower.
 - Fixed lowering not happening at all on some setups (the springs were never created).
 - Fixed the jeep being pinned to the ground and unable to drive after retracting.
 - Fixed spikes being flung out of the ground the moment they were planted.
