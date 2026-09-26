@@ -119,31 +119,13 @@ end
     Defence smoke canister — LVS's behaviour, gred's particle.
 
     lvs_item_smoke sends lvs_defence_smoke (origin only) every 0.2 s from
-    its first collision until it is removed. That is followed exactly:
-    the first call starts the gred particle at that origin, every call
-    moves it to the call's origin (the only tracking LVS provides), a
-    finished particle is started again while calls keep coming, and it
-    stops when the calls stop. Nothing is inferred beyond that.
-
-    Calls from the same canister are matched by proximity: a canister
-    moves at most a few units between two calls 0.2 s apart.
+    its first collision until it is removed, and LVS's effect spawns its
+    own puffs on EVERY call. That is followed exactly: every call spawns a
+    gred smoke emitter at the call's origin. Each one is told to stop
+    emitting SmokeScreenEmitTime after it started (2.5 s) and then fades on
+    its own particles' lifetimes, so a 30 s canister never piles up
+    emitters. Nothing is matched, moved, restarted or inferred.
 -----------------------------------------------------------------------------]]
-local SMOKE_CADENCE    = 0.2    -- lvs_item_smoke: SetNextClientThink(T + 0.2)
-local SMOKE_MATCH_DIST = 96
-
--- Debug: which LVS items appear on the client when smoke is deployed, so a
--- renamed canister class or effect on a newer LVS shows up in the log.
-hook.Add("OnEntityCreated", "lvs_gred_fx_smoke_trace", function(ent)
-    if not cfg.DebugEnabled() then return end
-    timer.Simple(0, function()
-        if not IsValid(ent) then return end
-        local class = ent:GetClass()
-        if class:find("smoke", 1, true) or class:find("lvs_item", 1, true) then
-            LVS_GRED_FX.Debug("entity created:", class, "model:", ent:GetModel())
-        end
-    end)
-end)
-
 function P.SmokeScreen(name, self, data)
     self._gmode = "oneshot"
     if not cfg.Enabled() then return false end
@@ -151,51 +133,19 @@ function P.SmokeScreen(name, self, data)
     local pos = data.GetOrigin and data:GetOrigin() or nil
     if not isvector(pos) then return false end
 
-    local now = CurTime()
-    local bestKey, bestD = nil, SMOKE_MATCH_DIST * SMOKE_MATCH_DIST
-    for key, src in pairs(P.Active) do
-        if src.kind == "smoke" and src.pos then
-            local d = src.pos:DistToSqr(pos)
-            if d < bestD then bestKey, bestD = key, d end
-        end
-    end
-
-    if bestKey then
-        local src = P.Active[bestKey]
-        src.lastCall = now
-        src.pos = pos
-        if LVS_GRED_FX.PsysValid(src.psys) and not src.psys:IsFinished() then
-            src.psys:SetControlPoint(0, pos)
-            LVS_GRED_FX.DebugOnce("smoke:live", "smoke canister: live system moved to", tostring(pos),
-                "age:", string.format("%.1f", now - src.started))
-            return true
-        end
-        -- Ran its course while LVS is still calling: start it again here.
-        LVS_GRED_FX.DebugOnce("smoke:restart", "smoke canister: system finished, restarting")
-        stopSource(bestKey, src)
-    end
-
     local pcf = cfg.SmokeScreenPcf
     if not LVS_GRED_FX.Preload(pcf) then
         LVS_GRED_FX.DebugOnce("smoke:nopcf", "smoke canister: particle not available:", pcf)
         return false
     end
 
-    local psys = LVS_GRED_FX.SpawnWorld(pcf, pos, angle_zero, nil, false)
+    local psys = LVS_GRED_FX.SpawnWorld(pcf, pos, angle_zero, cfg.SmokeScreenEmitTime, false)
     if not LVS_GRED_FX.PsysValid(psys) then
         LVS_GRED_FX.DebugOnce("smoke:nospawn", "smoke canister: spawn failed:", pcf)
         return false
     end
 
-    local key = "smoke:" .. tostring(now) .. ":" .. tostring(pos)
-    P.Active[key] = {
-        kind = "smoke", psys = psys, pos = pos, lastCall = now, started = now,
-        cadence = SMOKE_CADENCE,
-    }
-    ensureWatcher()
-
-    if cfg.DebugEnabled() then
-        Debug("smoke canister:", pcf, "pos:", tostring(pos))
-    end
+    LVS_GRED_FX.DebugOnce("smoke:spawn", "smoke canister:", pcf, "pos:", tostring(pos),
+        "emits for", cfg.SmokeScreenEmitTime, "s")
     return true
 end

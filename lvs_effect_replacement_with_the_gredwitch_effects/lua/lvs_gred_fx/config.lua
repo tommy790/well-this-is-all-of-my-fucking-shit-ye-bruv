@@ -217,10 +217,12 @@ C.EntFirePcf = {
 
 C.AmmoRackPcf = "flame_jet"
 
--- Defence smoke canister (lvs_item_smoke). Driven exactly by LVS's calls
--- (persistent.lua). m203_smokegrenade: 15 puffs lasting 15-50 s plus a
--- brief flame/spark burst.
-C.SmokeScreenPcf = "m203_smokegrenade"
+-- Defence smoke canister (lvs_item_smoke): one gred emitter per LVS call
+-- (every 0.2 s while the canister lives), each stopped after
+-- SmokeScreenEmitTime seconds. smokegrenade_b is gred's continuous
+-- smoke-grenade emitter (5 puffs/s, radius 70-85, puff life 3-5 s).
+C.SmokeScreenPcf      = "smokegrenade_b"
+C.SmokeScreenEmitTime = 2.5
 
 -- Water spray from hulls/wheels (lvs_hover_water & co.) is fired every
 -- tick per contact point; one live system per contact slot at a time.
