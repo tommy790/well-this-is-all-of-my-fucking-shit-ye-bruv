@@ -48,7 +48,7 @@ if not CLIENT then return end
 local cfg = LVS_GRED_FX.Config
 
 -- Printed in the pose diagnostics so a log can be matched to the code.
-LVS_GRED_FX.MUZZLE_BUILD = "proxy-follow-3"
+LVS_GRED_FX.MUZZLE_BUILD = "proxy-follow-4"
 
 -- Code point acceptance window (units). LVS fires from the attachment
 -- position itself; recoil moves the origin a few units back along the bore.
@@ -469,9 +469,10 @@ end
 --    while a pintle MG whips around the server's origin is up to ~14 u
 --    beside the barrel the client renders, with the sign of the swing. That
 --    is not noise to average (a median across swing directions applied the
---    wrong sign); it is simply absent when the mount is still. So only
---    shots fired with the mount at rest -- attachment not moved in hull
---    space since the previous shot -- update the gun's steady offset, and
+--    wrong sign); it is simply absent when the mount is still and it never
+--    repeats exactly. So only shots fired with the mount at rest --
+--    attachment not moved in hull space since the previous shot -- or whose
+--    raw offset repeats the previous shot's update the gun's steady offset, and
 --    that steady value is what is applied while it moves. Before any calm
 --    shot exists the flash sits on the attachment itself (offset zero)
 --    unless the raw offset is clearly a different barrel of a shared-point
@@ -521,6 +522,11 @@ end
 -- within GROUP_RADIUS of, otherwise starts a new one. Single-barrel guns
 -- form one group; each barrel keeps its own median and tick estimate.
 local GROUP_RADIUS = 8
+-- A raw offset that repeats within this of the previous shot is structural
+-- whatever the mount is doing (Patton coax: 3.6 u beside its attachment on
+-- every shot through 100 degrees of traverse); swing error on a whipping
+-- mount changes from shot to shot (Willys: 2.6, 7.6, 8.1, 14.0).
+local CONSISTENT = 1.0
 
 local LAST_TICK_COMP, LAST_TICK_K, LAST_CALM = 0, 0, false
 local function steadyOffset(ent, id, code, rawOffset, stepOffset, att)
@@ -537,6 +543,9 @@ local function steadyOffset(ent, id, code, rawOffset, stepOffset, att)
         calm = rec.lastPos:Distance(att.Pos) <= CALM_POS and angleDelta(rec.lastAng, att.Ang) <= CALM_ANG
     end
     rec.lastPos, rec.lastAng = Vector(att.Pos), Angle(att.Ang)
+    local consistent = rec.lastRaw ~= nil and rec.lastRaw:Distance(rawOffset) <= CONSISTENT
+    rec.lastRaw = Vector(rawOffset)
+    calm = calm or consistent
     LAST_CALM = calm
 
     -- The barrel this shot belongs to.
