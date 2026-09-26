@@ -464,15 +464,32 @@ local function resolveImpl(ent, muzzlePos, effectDataAtt, dir, code)
 
     -- The code's attachment missed the barrel-line test (a traversing turret
     -- puts the client's attachment a few units from where the server fired
-    -- from). It is still the weapon's own point: the geometric chain may
-    -- only overrule it with an attachment that is clearly closer to the
-    -- shot. Otherwise the fallback ends up on a different gun altogether
-    -- (T-35: the MG's shot handed to the cannon muzzle 28u away).
+    -- from; the BMD-4M fires its 30mm 12u beside the point its code names).
+    -- It is still the weapon's own point, so the geometric chain may only
+    -- overrule it in a specific case:
+    --   * the code names ONE point: only a muzzle/barrel-named attachment
+    --     sitting right at the shot origin beats it -- that is a twin/quad
+    --     mount whose code names a shared point and offsets each shot to a
+    --     real barrel tip. A nearer non-barrel attachment never wins (BMD-4M:
+    --     the cannon's misnamed "sight" lies on the 30mm's line of fire);
+    --   * the code names several points: the geometric pick must be clearly
+    --     closer to the shot than the nearest of them.
+    -- Otherwise the fallback lands on a different gun altogether (T-35: the
+    -- MG's shot handed to the cannon muzzle 28u away).
     if code and code.ids and #code.ids > 0 then
         local codeId, codeD = nearestOf(ent, code.ids, muzzlePos, MAX_NAMED_DIST * MAX_NAMED_DIST)
         if codeId > 0 then
             local codeDist = math.sqrt(codeD)
-            if id == 0 or not info.dist or info.dist > codeDist - CLEARLY_CLOSER then
+            local overruled
+            if id == 0 or id == codeId or not info.dist then
+                overruled = false
+            elseif #code.ids == 1 then
+                overruled = isMuzzleName(cache.nameById[id]) and info.dist <= CLEARLY_CLOSER
+                    and info.dist <= codeDist - CLEARLY_CLOSER
+            else
+                overruled = info.dist <= codeDist - CLEARLY_CLOSER
+            end
+            if not overruled then
                 local _, cinfo = result(cache, codeId, "weapon_code_near", codeD)
                 cinfo.reader = code.reader
                 if dir then
