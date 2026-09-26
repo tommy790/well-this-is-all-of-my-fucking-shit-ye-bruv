@@ -444,6 +444,8 @@ local function resolveByWeaponCode(ent, cache, muzzlePos, dir, code)
     return 0, "shot origin not at the code's attachment(s)"
 end
 
+local resolveGeometric
+
 local function resolveImpl(ent, muzzlePos, effectDataAtt, dir, code)
     if cfg.DebugEnabled() and debugoverlay and debugoverlay.Box then
         local boxPos = (ent == ACTIVE_VEH) and ent:LocalToWorld(muzzlePos - REF_ORIGIN) or muzzlePos
@@ -453,13 +455,42 @@ local function resolveImpl(ent, muzzlePos, effectDataAtt, dir, code)
     local cache = GetCache(ent)
 
     -- What the vehicle's weapon configuration says fires from where.
-    local codeReason = nil
     if code then
         local id, info = resolveByWeaponCode(ent, cache, muzzlePos, dir, code)
         if id > 0 then return id, info end
-        codeReason = info
     end
 
+    local id, info = resolveGeometric(ent, cache, muzzlePos, effectDataAtt, dir)
+
+    -- The code's attachment missed the barrel-line test (a traversing turret
+    -- puts the client's attachment a few units from where the server fired
+    -- from). It is still the weapon's own point: the geometric chain may
+    -- only overrule it with an attachment that is clearly closer to the
+    -- shot. Otherwise the fallback ends up on a different gun altogether
+    -- (T-35: the MG's shot handed to the cannon muzzle 28u away).
+    if code and code.ids and #code.ids > 0 then
+        local codeId, codeD = nearestOf(ent, code.ids, muzzlePos, MAX_NAMED_DIST * MAX_NAMED_DIST)
+        if codeId > 0 then
+            local codeDist = math.sqrt(codeD)
+            if id == 0 or not info.dist or info.dist > codeDist - CLEARLY_CLOSER then
+                local _, cinfo = result(cache, codeId, "weapon_code_near", codeD)
+                cinfo.reader = code.reader
+                if dir then
+                    local att = LVS_GRED_FX.GetAttachmentData(ent, codeId)
+                    if att then
+                        local v = att.Pos - muzzlePos
+                        cinfo.perp = (v - dir * v:Dot(dir)):Length()
+                    end
+                end
+                return codeId, cinfo
+            end
+        end
+    end
+
+    return id, info
+end
+
+local function resolveGeometricImpl(ent, cache, muzzlePos, effectDataAtt, dir)
     -- 0) Barrel axis (needs the bullet direction).
     if dir then
         local id, perp = resolveByAxis(ent, cache, muzzlePos, dir)
@@ -535,6 +566,7 @@ local function resolveImpl(ent, muzzlePos, effectDataAtt, dir, code)
 
     return 0, { method = "none", reason = "no attachment near muzzle position" }
 end
+resolveGeometric = resolveGeometricImpl
 
 local function resolveOnReference(ent, muzzlePos, effectDataAtt, dir, code)
     local now = CurTime()
@@ -564,7 +596,7 @@ end
 
     Returns: attachmentID, info
       info = {
-        method = "weapon_code" | "weapon_code_axis"
+        method = "weapon_code" | "weapon_code_axis" | "weapon_code_near"
                | "barrel_axis" | "remembered" | "effectdata" | "lvs_muzzle_name"
                | "lvs_muzzle_name_other_barrel" | "named_nearest" | "nearest" | "none",
         dist   = distance from the shot origin (nil for "none"),
