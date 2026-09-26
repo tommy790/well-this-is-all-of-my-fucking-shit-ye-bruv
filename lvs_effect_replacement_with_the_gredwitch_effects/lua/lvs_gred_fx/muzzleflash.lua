@@ -208,8 +208,8 @@ spawnResolved = function(effectName, ent, muzzlePos, normal, dataAtt)
             "code-named:", info and info.code or "-",
             "motion:", string.format("%.1f", LVS_GRED_FX.LastMotionCompensation and LVS_GRED_FX.LastMotionCompensation() or 0),
             "tick comp:", (function()
-                local c, k = LVS_GRED_FX.LastTickCompensation()
-                return string.format("%.1f (k=%d)", c or 0, k or 0)
+                local c, k, calm = LVS_GRED_FX.LastTickCompensation()
+                return string.format("%.1f (k=%d) mount %s", c or 0, k or 0, calm and "still" or "moving")
             end)())
     end
 

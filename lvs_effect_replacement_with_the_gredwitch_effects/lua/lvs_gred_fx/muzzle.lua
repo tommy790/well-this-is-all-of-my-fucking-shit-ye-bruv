@@ -462,24 +462,29 @@ local function resolveByWeaponCode(ent, cache, muzzlePos, dir, code)
 end
 
 -- Two things sit on top of a gun's true, constant offset from its
--- attachment and both are measured out here per vehicle class, attachment
--- and weapon, from the recent shots:
+-- attachment; both are handled per vehicle class, attachment and weapon
+-- from the shots themselves:
 --
+--  * Mount swing. Server and client smooth a mount's aim independently, so
+--    while a pintle MG whips around the server's origin is up to ~14 u
+--    beside the barrel the client renders, with the sign of the swing. That
+--    is not noise to average (a median across swing directions applied the
+--    wrong sign); it is simply absent when the mount is still. So only
+--    shots fired with the mount at rest -- attachment not moved in hull
+--    space since the previous shot -- update the gun's steady offset, and
+--    that steady value is what is applied while it moves. Before any calm
+--    shot exists the raw offset is used.
 --  * Staleness. Some LVS fire paths build the origin from a server
 --    attachment position that is one tick old (T-35 turret: the offset grew
 --    with speed and one tick of hull velocity removed it); others do not
---    (Willys gunner pod: the same correction put the flash 8 u ahead of the
---    barrel). Which applies cannot be seen from the client, so each shot
---    stores the raw offset and the one-tick step in the attachment's frame,
---    and the correction (none or one tick) that leaves the smaller median
---    offset over the recent shots is the one used. Standing still both are
---    identical.
---  * Mount swing. Server and client smooth a mount's aim independently, so
---    while a pintle MG whips around the server's origin is a few units
---    beside the barrel the client renders. The per-component median over
---    the recent shots keeps a real constant offset (BMD-4M 30mm, 12 u every
---    shot) and sheds that transient.
+--    (Willys gunner pod: the same correction put the flash 8 u ahead). Each
+--    calm shot stores the raw offset and the one-tick step in the
+--    attachment's frame; the correction (none or one tick) that leaves the
+--    smaller median offset over the recent calm shots is used. Standing
+--    still both are identical.
 local STEADY_SAMPLES = 8
+local CALM_POS = 0.25   -- attachment moved less than this (u) since the last shot
+local CALM_ANG = 0.5    -- and turned less than this (deg)
 local STEADY = {}
 local function median(list)
     local t = {}
@@ -497,23 +502,42 @@ local function medianOffset(samples, k)
     end
     return Vector(median(xs), median(ys), median(zs))
 end
-local LAST_TICK_COMP, LAST_TICK_K = 0, 0
-local function steadyOffset(ent, id, code, rawOffset, stepOffset)
+local function angleDelta(a, b)
+    return math.max(math.abs(math.AngleDifference(a.p, b.p)), math.abs(math.AngleDifference(a.y, b.y)),
+        math.abs(math.AngleDifference(a.r, b.r)))
+end
+local LAST_TICK_COMP, LAST_TICK_K, LAST_CALM = 0, 0, false
+local function steadyOffset(ent, id, code, rawOffset, stepOffset, att)
     local key = ent:GetClass() .. "|" .. id .. "|" .. tostring(code and code.weaponId or "")
-    local samples = STEADY[key]
-    if not samples then
-        samples = {}
-        STEADY[key] = samples
+    local rec = STEADY[key]
+    if not rec then
+        rec = { samples = {} }
+        STEADY[key] = rec
     end
-    samples[#samples + 1] = { raw = rawOffset, step = stepOffset }
-    if #samples > STEADY_SAMPLES then table.remove(samples, 1) end
 
-    local m0, m1 = medianOffset(samples, 0), medianOffset(samples, 1)
+    -- Attachment pose in hull (reference) space: still since the last shot?
+    local calm = false
+    if rec.lastPos and rec.lastAng then
+        calm = rec.lastPos:Distance(att.Pos) <= CALM_POS and angleDelta(rec.lastAng, att.Ang) <= CALM_ANG
+    end
+    rec.lastPos, rec.lastAng = Vector(att.Pos), Angle(att.Ang)
+    LAST_CALM = calm
+
+    if calm then
+        rec.samples[#rec.samples + 1] = { raw = rawOffset, step = stepOffset }
+        if #rec.samples > STEADY_SAMPLES then table.remove(rec.samples, 1) end
+    end
+    if #rec.samples == 0 then
+        LAST_TICK_K, LAST_TICK_COMP = 0, 0
+        return rawOffset
+    end
+
+    local m0, m1 = medianOffset(rec.samples, 0), medianOffset(rec.samples, 1)
     local k = (m1:Length() < m0:Length()) and 1 or 0
     LAST_TICK_K, LAST_TICK_COMP = k, stepOffset:Length() * k
     return k == 1 and m1 or m0
 end
-function LVS_GRED_FX.LastTickCompensation() return LAST_TICK_COMP, LAST_TICK_K end
+function LVS_GRED_FX.LastTickCompensation() return LAST_TICK_COMP, LAST_TICK_K, LAST_CALM end
 
 -- Origin expressed in the frame of (framePos, frameAng).
 local function frameOffset(muzzlePos, dir, framePos, frameAng)
@@ -557,7 +581,7 @@ local function resolveImpl(ent, muzzlePos, dir, code, frameEnt, stepLocal)
                 -- (the reference hull has zero angles, so hull space is
                 -- reference space).
                 local stepAtt = WorldToLocal(att.Pos + (stepLocal or vector_origin), angle_zero, att.Pos, att.Ang)
-                info.offset = steadyOffset(ent, id, code, info.offset, stepAtt)
+                info.offset = steadyOffset(ent, id, code, info.offset, stepAtt, att)
                 if info.offset:Length() > AXIS_PERP_MAX then
                     info.method = "weapon_code_offset"
                 end
