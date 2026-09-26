@@ -195,6 +195,13 @@ local function captureTurretPose(ref, veh)
     -- growing live/ref gap with the pose values that failed to carry it.
     if cfg.DebugEnabled() and CurTime() - (veh._lvsGredPoseLog or 0) > 1 then
         veh._lvsGredPoseLog = CurTime()
+        -- Bypasses the per-second line budget: these three lines are the
+        -- ones needed when everything else is being suppressed.
+        local Debug = function(...) print("[lvs_gred_fx][pose]", ...) end
+        Debug("turret accessors:", "yaw", veh.GetTurretYaw and veh:GetTurretYaw() or "-",
+            "pitch", veh.GetTurretPitch and veh:GetTurretPitch() or "-",
+            "names", tostring(veh.TurretYawPoseParameterName), tostring(veh.TurretPitchPoseParameterName),
+            "mul/off", tostring(veh.TurretYawMul), tostring(veh.TurretYawOffset))
         local parts = {}
         for i = 0, nPose - 1 do
             local pname = veh:GetPoseParameterName(i)
