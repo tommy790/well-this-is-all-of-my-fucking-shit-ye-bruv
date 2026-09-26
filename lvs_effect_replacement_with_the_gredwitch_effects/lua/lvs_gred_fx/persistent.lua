@@ -6,7 +6,7 @@
     at a fixed cadence for as long as the condition holds:
 
       * lvs_ammorack_fire  — every 0.05 s from the ammo rack while destroyed
-      * lvs_defence_smoke  — every 0.2 s from lvs_item_smoke once it has landed
+      * lvs_defence_smoke  — every 0.2 s from lvs_item_smoke while it exists
 
     The native effects add a fresh handful of sprites per call. A gred
     particle system is a continuous emitter, so the right mapping is ONE
@@ -116,33 +116,20 @@ function P.AmmoRack(name, self, data)
 end
 
 --[[---------------------------------------------------------------------------
-    Defence smoke canister — one gred cloud per canister, once it has landed.
+    Defence smoke canister — LVS's behaviour, gred's particle.
 
-    lvs_item_smoke starts sending lvs_defence_smoke (every 0.2 s, origin
-    only) from its FIRST PhysicsCollide, and a canister launched from a
-    tank usually clips the launching hull on the way out, so LVS's calls
-    begin mid-flight. LVS's own sprites start at size 0 and take seconds to
-    grow, so natively that is barely visible; a gred cloud popped at the
-    first call sat in the air. So the canister entity is looked up at the
-    origin and the cloud starts only once it has come to rest; earlier
-    calls are ignored (LVS keeps calling, nothing is missed).
+    lvs_item_smoke sends lvs_defence_smoke (origin only) every 0.2 s from
+    its first collision until it is removed. That is followed exactly:
+    the first call starts the gred particle at that origin, every call
+    moves it to the call's origin (the only tracking LVS provides), a
+    finished particle is started again while calls keep coming, and it
+    stops when the calls stop. Nothing is inferred beyond that.
 
-    m203_smokegrenade is a single pop (15 puffs, 15-50 s) with no
-    continuous emission: spawned once per canister, attached to it so it
-    follows a last roll, and left to its own lifetime.
+    Calls from the same canister are matched by proximity: a canister
+    moves at most a few units between two calls 0.2 s apart.
 -----------------------------------------------------------------------------]]
 local SMOKE_CADENCE    = 0.2    -- lvs_item_smoke: SetNextClientThink(T + 0.2)
-local SMOKE_FIND_DIST  = 48     -- canister entity is at the effect origin
-local SMOKE_REST_SPEED = 30     -- a can rolling slower than this is settling, not flying
-
-local function canisterAt(pos)
-    local best, bestD = nil, SMOKE_FIND_DIST * SMOKE_FIND_DIST
-    for _, ent in ipairs(ents.FindByClass("lvs_item_smoke")) do
-        local d = ent:GetPos():DistToSqr(pos)
-        if d < bestD then best, bestD = ent, d end
-    end
-    return best
-end
+local SMOKE_MATCH_DIST = 96
 
 function P.SmokeScreen(name, self, data)
     self._gmode = "oneshot"
@@ -151,36 +138,42 @@ function P.SmokeScreen(name, self, data)
     local pos = data.GetOrigin and data:GetOrigin() or nil
     if not isvector(pos) then return false end
 
-    local can = canisterAt(pos)
-    if not IsValid(can) then return false end
-
-    local key = "smoke:" .. can:EntIndex()
-    local src = P.Active[key]
-    if src then
-        src.lastCall = CurTime()
-        return true
+    local now = CurTime()
+    local bestKey, bestD = nil, SMOKE_MATCH_DIST * SMOKE_MATCH_DIST
+    for key, src in pairs(P.Active) do
+        if src.kind == "smoke" and src.pos then
+            local d = src.pos:DistToSqr(pos)
+            if d < bestD then bestKey, bestD = key, d end
+        end
     end
 
-    -- Still flying: wait for it to come to rest.
-    if can:GetVelocity():Length() > SMOKE_REST_SPEED then return true end
+    if bestKey then
+        local src = P.Active[bestKey]
+        src.lastCall = now
+        src.pos = pos
+        if LVS_GRED_FX.PsysValid(src.psys) and not src.psys:IsFinished() then
+            src.psys:SetControlPoint(0, pos)
+            return true
+        end
+        -- Ran its course while LVS is still calling: start it again here.
+        stopSource(bestKey, src)
+    end
 
     local pcf = cfg.SmokeScreenPcf
     if not LVS_GRED_FX.Preload(pcf) then return false end
 
-    local ok, psys = pcall(CreateParticleSystem, can, pcf, PATTACH_ABSORIGIN_FOLLOW, 0, vector_origin)
-    if not ok or not LVS_GRED_FX.PsysValid(psys) then return false end
+    local psys = LVS_GRED_FX.SpawnWorld(pcf, pos, angle_zero, nil, false)
+    if not LVS_GRED_FX.PsysValid(psys) then return false end
 
-    -- Tracked for cleanup only (canister removed / calls stop); the pop has
-    -- no emission to cap. The cadence window is generous because the
-    -- canister keeps calling for its whole 30 s life.
+    local key = "smoke:" .. tostring(now) .. ":" .. tostring(pos)
     P.Active[key] = {
-        kind = "smoke", psys = psys, ent = can, pos = pos,
-        lastCall = CurTime(), started = CurTime(), cadence = SMOKE_CADENCE,
+        kind = "smoke", psys = psys, pos = pos, lastCall = now, started = now,
+        cadence = SMOKE_CADENCE,
     }
     ensureWatcher()
 
     if cfg.DebugEnabled() then
-        Debug("smoke canister landed:", pcf, "ent:", can:EntIndex(), "pos:", tostring(pos))
+        Debug("smoke canister:", pcf, "pos:", tostring(pos))
     end
     return true
 end
