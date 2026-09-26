@@ -48,7 +48,7 @@ if not CLIENT then return end
 local cfg = LVS_GRED_FX.Config
 
 -- Printed in the pose diagnostics so a log can be matched to the code.
-LVS_GRED_FX.MUZZLE_BUILD = "pose-from-render-5"
+LVS_GRED_FX.MUZZLE_BUILD = "pose-from-render-6"
 
 -- Code point acceptance window (units). LVS fires from the attachment
 -- position itself; recoil moves the origin a few units back along the bore.
@@ -589,6 +589,14 @@ local function resolveImpl(ent, muzzlePos, dir, code, frameEnt, stepLocal, turre
                 -- reference space).
                 local stepAtt = WorldToLocal(att.Pos + (stepLocal or vector_origin), angle_zero, att.Pos, att.Ang)
                 info.offset = steadyOffset(ent, id, code, info.offset, stepAtt, att)
+                -- Never behind the tip: an origin back down the bore is the
+                -- server's recoiled gun (BMP-2: 22.6 u while firing, the
+                -- client's gun does not recoil) or LVS's recoil offset, and
+                -- a flash inside the barrel is wrong either way. Sideways
+                -- and forward components are kept.
+                local fwd = info.offsetAng:Forward()
+                local back = info.offset:Dot(fwd)
+                if back < 0 then info.offset = info.offset - fwd * back end
                 if info.offset:Length() > AXIS_PERP_MAX then
                     info.method = "weapon_code_offset"
                 end
