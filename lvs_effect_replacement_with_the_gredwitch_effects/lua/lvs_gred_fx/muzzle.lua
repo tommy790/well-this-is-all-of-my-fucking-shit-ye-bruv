@@ -461,15 +461,24 @@ local function resolveByWeaponCode(ent, cache, muzzlePos, dir, code)
     return 0, "shot origin not at the code's attachment(s)"
 end
 
--- The server and the client each smooth a gun mount's aim on their own
--- (LVS runs the same approach code on both sides; nothing per-frame is
--- networked), so while a mount swings fast the server's origin sits a few
--- units beside the barrel the client renders (Willys pintle MG: up to 8 u
--- at ~40 u arm). That is transient; a gun that really fires beside its
--- attachment (BMD-4M 30mm, 12 u) shows the same offset on every shot. The
--- per-component median of the recent shots for this vehicle class,
--- attachment and weapon keeps the constant and sheds the swing noise, so
--- the flash sits on the rendered barrel.
+-- Two things sit on top of a gun's true, constant offset from its
+-- attachment and both are measured out here per vehicle class, attachment
+-- and weapon, from the recent shots:
+--
+--  * Staleness. Some LVS fire paths build the origin from a server
+--    attachment position that is one tick old (T-35 turret: the offset grew
+--    with speed and one tick of hull velocity removed it); others do not
+--    (Willys gunner pod: the same correction put the flash 8 u ahead of the
+--    barrel). Which applies cannot be seen from the client, so each shot
+--    stores the raw offset and the one-tick step in the attachment's frame,
+--    and the correction (none or one tick) that leaves the smaller median
+--    offset over the recent shots is the one used. Standing still both are
+--    identical.
+--  * Mount swing. Server and client smooth a mount's aim independently, so
+--    while a pintle MG whips around the server's origin is a few units
+--    beside the barrel the client renders. The per-component median over
+--    the recent shots keeps a real constant offset (BMD-4M 30mm, 12 u every
+--    shot) and sheds that transient.
 local STEADY_SAMPLES = 8
 local STEADY = {}
 local function median(list)
@@ -480,20 +489,31 @@ local function median(list)
     if n % 2 == 1 then return t[(n + 1) / 2] end
     return (t[n / 2] + t[n / 2 + 1]) * 0.5
 end
-local function steadyOffset(ent, id, code, offset)
-    local key = ent:GetClass() .. "|" .. id .. "|" .. tostring(code and code.weaponId or "")
-    local rec = STEADY[key]
-    if not rec then
-        rec = { x = {}, y = {}, z = {} }
-        STEADY[key] = rec
+local function medianOffset(samples, k)
+    local xs, ys, zs = {}, {}, {}
+    for i = 1, #samples do
+        local v = samples[i].raw + samples[i].step * k
+        xs[i], ys[i], zs[i] = v.x, v.y, v.z
     end
-    for _, axis in ipairs({ "x", "y", "z" }) do
-        local list = rec[axis]
-        list[#list + 1] = offset[axis]
-        if #list > STEADY_SAMPLES then table.remove(list, 1) end
-    end
-    return Vector(median(rec.x), median(rec.y), median(rec.z))
+    return Vector(median(xs), median(ys), median(zs))
 end
+local LAST_TICK_COMP, LAST_TICK_K = 0, 0
+local function steadyOffset(ent, id, code, rawOffset, stepOffset)
+    local key = ent:GetClass() .. "|" .. id .. "|" .. tostring(code and code.weaponId or "")
+    local samples = STEADY[key]
+    if not samples then
+        samples = {}
+        STEADY[key] = samples
+    end
+    samples[#samples + 1] = { raw = rawOffset, step = stepOffset }
+    if #samples > STEADY_SAMPLES then table.remove(samples, 1) end
+
+    local m0, m1 = medianOffset(samples, 0), medianOffset(samples, 1)
+    local k = (m1:Length() < m0:Length()) and 1 or 0
+    LAST_TICK_K, LAST_TICK_COMP = k, stepOffset:Length() * k
+    return k == 1 and m1 or m0
+end
+function LVS_GRED_FX.LastTickCompensation() return LAST_TICK_COMP, LAST_TICK_K end
 
 -- Origin expressed in the frame of (framePos, frameAng).
 local function frameOffset(muzzlePos, dir, framePos, frameAng)
@@ -502,7 +522,7 @@ local function frameOffset(muzzlePos, dir, framePos, frameAng)
     return lpos, lang
 end
 
-local function resolveImpl(ent, muzzlePos, dir, code, frameEnt)
+local function resolveImpl(ent, muzzlePos, dir, code, frameEnt, stepLocal)
     if cfg.DebugEnabled() and debugoverlay and debugoverlay.Box then
         local boxPos = (ent == ACTIVE_VEH) and ent:LocalToWorld(muzzlePos - REF_ORIGIN) or muzzlePos
         debugoverlay.Box(boxPos, Vector(4, 4, 4), 0.5, Color(0, 100, 255, 60))
@@ -533,7 +553,11 @@ local function resolveImpl(ent, muzzlePos, dir, code, frameEnt)
                 -- the shots that took that path).
                 info.offset, info.offsetAng = frameOffset(muzzlePos, dir, att.Pos, att.Ang)
                 info.offsetShot = info.offset
-                info.offset = steadyOffset(ent, id, code, info.offset)
+                -- The hull's one-tick step, rotated into the attachment frame
+                -- (the reference hull has zero angles, so hull space is
+                -- reference space).
+                local stepAtt = WorldToLocal(att.Pos + (stepLocal or vector_origin), angle_zero, att.Pos, att.Ang)
+                info.offset = steadyOffset(ent, id, code, info.offset, stepAtt)
                 if info.offset:Length() > AXIS_PERP_MAX then
                     info.method = "weapon_code_offset"
                 end
@@ -555,7 +579,7 @@ local function resolveImpl(ent, muzzlePos, dir, code, frameEnt)
     return 0, info
 end
 
-local function resolveOnReference(ent, muzzlePos, dir, code, frameEnt, srcLocal)
+local function resolveOnReference(ent, muzzlePos, dir, code, frameEnt, srcLocal, stepLocal)
     local now = CurTime()
     local shotId = ent._lvsGredShotId
     if not shotId or now - (ent._lvsGredShotTime or 0) > SHOT_WINDOW then
@@ -582,7 +606,7 @@ local function resolveOnReference(ent, muzzlePos, dir, code, frameEnt, srcLocal)
         refPos, refTip = toReferenceSpace(ent, ref, muzzlePos, dir and (muzzlePos + dir * 16) or nil)
         refDir = refTip and (refTip - refPos):GetNormalized() or nil
     end
-    local ok, id, info = pcall(resolveImpl, ent, refPos, refDir, code, frameEnt)
+    local ok, id, info = pcall(resolveImpl, ent, refPos, refDir, code, frameEnt, stepLocal)
     ACTIVE_REF, ACTIVE_VEH = nil, nil
     if not ok then return nil end
     if code and info and not info.reader then
@@ -609,30 +633,17 @@ end
     LVS's EffectData attachment id is unreliable and nothing is remembered
     between shots because nothing is estimated.
 -----------------------------------------------------------------------------]]
--- LVS computes the shot origin on the server from an attachment position,
--- and Source's server-side attachment positions come from the bone setup
--- of the previous tick while WorldToLocal uses the current origin. On a
--- moving vehicle the local origin therefore lands one tick of travel
--- BEHIND the gun, along the hull's velocity (T-35 at ~240 u/s: 4 u, the
--- direction fixed in the world while the turret turns). Moving it forward
--- by one tick of the hull's velocity, in hull space, removes that.
-local LAST_TICK_COMP = 0
-local function tickCompensate(veh, srcLocal)
-    LAST_TICK_COMP = 0
-    local vel = veh:GetVelocity()
-    if not isvector(vel) or vel:LengthSqr() < 1 then return srcLocal end
-    local step = vel * engine.TickInterval()
-    local localStep = veh:WorldToLocal(veh:GetPos() + step)
-    LAST_TICK_COMP = localStep:Length()
-    return srcLocal + localStep
-end
-function LVS_GRED_FX.LastTickCompensation() return LAST_TICK_COMP end
-
 function LVS_GRED_FX.ResolveMuzzleAttachment(ent, muzzlePos, effectDataAtt, gunKey, dir, weaponEnt, srcLocal)
     if not IsValid(ent) then return 0, { method = "none", reason = "invalid entity" } end
     if not isvector(muzzlePos) then return 0, { method = "none", reason = "invalid muzzle position" } end
     if isvector(dir) and dir:LengthSqr() > 0.0001 then dir = dir:GetNormalized() else dir = nil end
-    if isvector(srcLocal) then srcLocal = tickCompensate(ent, srcLocal) end
+    -- One tick of hull travel in hull space; whether the origin needs it is
+    -- decided per gun from the shots themselves (steadyOffset).
+    local stepLocal = vector_origin
+    local vel = ent:GetVelocity()
+    if isvector(vel) and vel:LengthSqr() >= 1 then
+        stepLocal = ent:WorldToLocal(ent:GetPos() + vel * engine.TickInterval())
+    end
 
     -- The entity LVS fired the effect on (gunner pod or the vehicle itself)
     -- carries the selected weapon; `ent` is the root the attachments live on.
@@ -644,11 +655,11 @@ function LVS_GRED_FX.ResolveMuzzleAttachment(ent, muzzlePos, effectDataAtt, gunK
     -- firing entity's own.
     local frameEnt = isvector(srcLocal) and ent or weaponHolder
 
-    local id, info = resolveOnReference(ent, muzzlePos, dir, code, frameEnt, srcLocal)
+    local id, info = resolveOnReference(ent, muzzlePos, dir, code, frameEnt, srcLocal, stepLocal)
     if id == nil then
         local livePos, liveTip = compensateHullMotion(ent, muzzlePos, dir and (muzzlePos + dir * 16) or nil)
         local liveDir = liveTip and (liveTip - livePos):GetNormalized() or nil
-        id, info = resolveImpl(ent, livePos, liveDir, code, frameEnt)
+        id, info = resolveImpl(ent, livePos, liveDir, code, frameEnt, stepLocal)
     end
 
     if id == 0 and info and info.method == "entity_frame" then
