@@ -491,7 +491,14 @@ local function resolveImpl(ent, muzzlePos, effectDataAtt, dir, code)
             -- not, and it is the barrel that fired. Only muzzle/barrel-named
             -- attachments outside the code's own set qualify; a sight or aim
             -- point never does.
-            if dir and info.method == "weapon_code_near" and cache.named and #cache.named > 0 then
+            -- The shared point can itself sit on the barrel line (Flakpanzer
+            -- 341: "aim" is behind the barrels on the bore axis, 8u from the
+            -- shot), so this is checked whenever the code's point is not a
+            -- muzzle/barrel attachment itself, and the barrel must be nearer
+            -- the shot than the code's point (a coaxial MG's code point at
+            -- 3u is never given up for the cannon muzzle further down the
+            -- same line).
+            if dir and not isMuzzleName(cache.nameById[id]) and cache.named and #cache.named > 0 then
                 local tips = {}
                 for i = 1, #cache.named do
                     local nid = cache.named[i]
@@ -501,10 +508,12 @@ local function resolveImpl(ent, muzzlePos, effectDataAtt, dir, code)
                     local tipId, tipPerp = resolveByAxis(ent, cache, muzzlePos, dir, tips)
                     if tipId > 0 then
                         local att = LVS_GRED_FX.GetAttachmentData(ent, tipId)
-                        local _, tinfo = result(cache, tipId, "weapon_code_barrel_tip",
-                            att and att.Pos:DistToSqr(muzzlePos) or 0)
-                        tinfo.perp, tinfo.reader = tipPerp, code.reader
-                        return tipId, tinfo
+                        local tipD = att and att.Pos:DistToSqr(muzzlePos) or math.huge
+                        if math.sqrt(tipD) < (info.dist or math.huge) then
+                            local _, tinfo = result(cache, tipId, "weapon_code_barrel_tip", tipD)
+                            tinfo.perp, tinfo.reader = tipPerp, code.reader
+                            return tipId, tinfo
+                        end
                     end
                 end
             end
