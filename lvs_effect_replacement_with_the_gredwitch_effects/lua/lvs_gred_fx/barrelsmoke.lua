@@ -64,7 +64,7 @@ local function smokeLife(pcf)
     return t or cfg.SmokeLife
 end
 
-function LVS_GRED_FX_BARRELSMOKE.Spawn(ent, muzzlePos, att, pcf)
+function LVS_GRED_FX_BARRELSMOKE.Spawn(ent, muzzlePos, att, pcf, place)
     if not cfg.SmokeEnabled() then return end
     if not IsValid(ent) or not isvector(muzzlePos) then return end
     if not isstring(pcf) or pcf == "" then return end
@@ -110,6 +110,8 @@ function LVS_GRED_FX_BARRELSMOKE.Spawn(ent, muzzlePos, att, pcf)
             life = life,
             clear = false,
             forceHandle = true,
+            offset = place and place.offset or nil,
+            offsetAng = place and place.offsetAng or nil,
         })
     end
 
@@ -164,7 +166,7 @@ hook.Add("Think", "lvs_gred_fx_smoke_chain", function()
     end
 end)
 
-function LVS_GRED_FX_BARRELSMOKE.SpawnSequence(ent, muzzlePos, att, list)
+function LVS_GRED_FX_BARRELSMOKE.SpawnSequence(ent, muzzlePos, att, list, place)
     if not cfg.SmokeEnabled() or not IsValid(ent) then return end
     if isstring(list) then list = { list } end
     if not istable(list) or #list == 0 then return end
@@ -181,7 +183,7 @@ function LVS_GRED_FX_BARRELSMOKE.SpawnSequence(ent, muzzlePos, att, list)
     local function stage(i)
         if i > #list then return end
         if not IsValid(ent) or chains[key] ~= token then return end
-        local rec = LVS_GRED_FX_BARRELSMOKE.Spawn(ent, muzzlePos, att, list[i])
+        local rec = LVS_GRED_FX_BARRELSMOKE.Spawn(ent, muzzlePos, att, list[i], place)
         if i >= #list then return end
 
         if rec and rec.psys then

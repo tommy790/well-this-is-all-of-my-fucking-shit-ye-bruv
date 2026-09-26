@@ -18,9 +18,11 @@
       reads the attachment(s) the selected weapon's Attack function fires
       from. With several (multi-barrel mounts) the barrel whose line passes
       through the shot origin is taken; if none does, the nearest of them.
-      The single exception is a mount whose code names one shared point and
-      offsets each shot onto a barrel with its own muzzle/barrel attachment
-      lying on the shot's barrel line -- that barrel is used.
+      When the shot does not come from the point itself (a shared "aim"
+      point the code offsets each barrel from, or a gun firing beside its
+      named point), the flash is placed at the exact origin the code
+      computed, in that attachment's frame, and parented to it. No other
+      attachment is ever searched for.
 
       Only when the code names nothing does a geometric chain run
       (first match wins):
@@ -482,39 +484,24 @@ local function resolveImpl(ent, muzzlePos, effectDataAtt, dir, code)
             end
         end
         if id > 0 then
-            -- One exception: a twin/quad mount whose code names a shared
-            -- point (Pz.IV Zerstörer: "aim", 18u from every barrel) and
-            -- offsets each shot onto a real barrel that has its own
-            -- muzzle/barrel attachment. That attachment lies on the shot's
-            -- barrel line (a recoiled origin sits a few units behind it, so
-            -- the line test, not plain distance) while the shared point does
-            -- not, and it is the barrel that fired. Only muzzle/barrel-named
-            -- attachments outside the code's own set qualify; a sight or aim
-            -- point never does.
-            -- The shared point can itself sit on the barrel line (Flakpanzer
-            -- 341: "aim" is behind the barrels on the bore axis, 8u from the
-            -- shot), so this is checked whenever the code's point is not a
-            -- muzzle/barrel attachment itself, and the barrel must be nearer
-            -- the shot than the code's point (a coaxial MG's code point at
-            -- 3u is never given up for the cannon muzzle further down the
-            -- same line).
-            if dir and not isMuzzleName(cache.nameById[id]) and cache.named and #cache.named > 0 then
-                local tips = {}
-                for i = 1, #cache.named do
-                    local nid = cache.named[i]
-                    if not table.HasValue(code.ids, nid) then tips[#tips + 1] = nid end
-                end
-                if #tips > 0 then
-                    local tipId, tipPerp = resolveByAxis(ent, cache, muzzlePos, dir, tips)
-                    if tipId > 0 then
-                        local att = LVS_GRED_FX.GetAttachmentData(ent, tipId)
-                        local tipD = att and att.Pos:DistToSqr(muzzlePos) or math.huge
-                        if math.sqrt(tipD) < (info.dist or math.huge) then
-                            local _, tinfo = result(cache, tipId, "weapon_code_barrel_tip", tipD)
-                            tinfo.perp, tinfo.reader = tipPerp, code.reader
-                            return tipId, tinfo
-                        end
-                    end
+            -- Where on that point the flash goes. A single-barrel gun fires
+            -- from the attachment itself (a recoiled origin lies a few units
+            -- BEHIND the tip, on its line): the flash sits on the attachment.
+            -- Anything else -- a shared "aim" point the code offsets each
+            -- barrel from (Flakpanzer 341, Pz.IV Zerstörer), the BMD-4M's
+            -- 30mm firing beside its "muzzle" -- fires from the origin the
+            -- code computed, so the flash is placed at exactly that origin,
+            -- expressed in the attachment's frame and parented to it. No
+            -- other attachment is searched for.
+            local att = LVS_GRED_FX.GetAttachmentData(ent, id)
+            if dir and att then
+                local v = att.Pos - muzzlePos
+                local along = v:Dot(dir)
+                local perp = (v - dir * along):Length()
+                info.perp = perp
+                if not (perp <= AXIS_PERP_MAX and along >= 0 and along <= AXIS_ALONG_MAX) then
+                    info.method = "weapon_code_offset"
+                    info.offset, info.offsetAng = WorldToLocal(muzzlePos, dir:Angle(), att.Pos, att.Ang)
                 end
             end
             return id, info
@@ -632,7 +619,7 @@ end
     Returns: attachmentID, info
       info = {
         method = "weapon_code" | "weapon_code_axis" | "weapon_code_near"
-               | "weapon_code_barrel_tip"
+               | "weapon_code_offset" (info.offset / info.offsetAng set)
                | "barrel_axis" | "remembered" | "effectdata" | "lvs_muzzle_name"
                | "lvs_muzzle_name_other_barrel" | "named_nearest" | "nearest" | "none",
         dist   = distance from the shot origin (nil for "none"),

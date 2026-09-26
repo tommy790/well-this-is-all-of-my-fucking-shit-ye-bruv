@@ -105,6 +105,39 @@ end
 
     Returns: psys handle, `true` (spawned via ParticleEffectAttach), or nil.
 -----------------------------------------------------------------------------]]
+-- Offset anchors: a hidden clientside entity parented to the vehicle's
+-- attachment at a local offset. Used when the weapon's code fires from a
+-- point that is not itself an attachment (a barrel offset from a shared
+-- "aim" point): the particle follows that exact point through traverse and
+-- recoil without any attachment having to exist there.
+local ANCHORS = {}
+local ANCHOR_GRACE = 5
+
+local function makeAnchor(ent, attID, offset, offsetAng, life)
+    local anchor = ClientsideModel("models/error.mdl", RENDERGROUP_OTHER)
+    if not IsValid(anchor) then return nil end
+    anchor:SetNoDraw(true)
+    anchor:DrawShadow(false)
+    anchor:SetParent(ent, attID)
+    anchor:SetLocalPos(offset)
+    anchor:SetLocalAngles(isangle(offsetAng) and offsetAng or angle_zero)
+    ANCHORS[#ANCHORS + 1] = { ent = anchor, veh = ent, until_ = CurTime() + (life or 1) + ANCHOR_GRACE }
+    return anchor
+end
+
+hook.Add("Think", "lvs_gred_fx_anchors", function()
+    local now = CurTime()
+    for i = #ANCHORS, 1, -1 do
+        local a = ANCHORS[i]
+        local dead = now >= a.until_ or not IsValid(a.veh)
+            or (a.psys and not (LVS_GRED_FX.PsysValid(a.psys) and not a.psys:IsFinished()))
+        if dead then
+            if IsValid(a.ent) then a.ent:Remove() end
+            table.remove(ANCHORS, i)
+        end
+    end
+end)
+
 function LVS_GRED_FX.SpawnAttached(name, ent, attID, opts)
     if not cfg.Enabled() or not isstring(name) then return nil end
     if not IsValid(ent) or not attID or attID <= 0 then return nil end
@@ -114,7 +147,19 @@ function LVS_GRED_FX.SpawnAttached(name, ent, attID, opts)
 
     opts = opts or {}
 
-    local ok, psys = pcall(CreateParticleSystem, ent, name, PPF, attID, vector_origin)
+    local host, mode, point = ent, PPF, attID
+    if isvector(opts.offset) then
+        local anchor = makeAnchor(ent, attID, opts.offset, opts.offsetAng, opts.life)
+        if IsValid(anchor) then
+            host, mode, point = anchor, PATTACH_ABSORIGIN_FOLLOW, 0
+        end
+    end
+
+    local ok, psys = pcall(CreateParticleSystem, host, name, mode, point, vector_origin)
+    if host ~= ent then
+        local rec = ANCHORS[#ANCHORS]
+        if rec and rec.ent == host then rec.psys = (ok and psys) or nil end
+    end
 
     -- The particle system handle is not an entity; validate it directly (see
     -- SpawnWorld for details).
@@ -132,9 +177,9 @@ function LVS_GRED_FX.SpawnAttached(name, ent, attID, opts)
         end
 
         if cfg.DebugEnabled() then
-            local attData = ent:GetAttachment(attID)
-            Debug("PATTACH_POINT_FOLLOW:", name, "ent:", ent:GetClass(),
-                "att:", attID, "attName:", attData and attData.Name or "?")
+            Debug(host == ent and "PATTACH_POINT_FOLLOW:" or "attachment + code offset:", name,
+                "ent:", ent:GetClass(), "att:", attID, "name:", LVS_GRED_FX.AttachmentName(ent, attID),
+                host ~= ent and ("offset: " .. tostring(opts.offset)) or "")
         end
 
         return psys
@@ -148,7 +193,7 @@ function LVS_GRED_FX.SpawnAttached(name, ent, attID, opts)
         return nil
     end
 
-    local okAttach = pcall(ParticleEffectAttach, name, PPF, ent, attID)
+    local okAttach = pcall(ParticleEffectAttach, name, mode, host, point)
 
     if okAttach then
         return true

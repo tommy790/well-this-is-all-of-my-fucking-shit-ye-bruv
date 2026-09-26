@@ -50,7 +50,7 @@ function LVS_GRED_FX.GetMuzzleRollFix(pcf, ent)
 end
 
 -- Spawn one muzzle-mounted flash particle. Returns true on success.
-local function spawnFlash(pcf, ent, muzzlePos, ang, att, life)
+local function spawnFlash(pcf, ent, muzzlePos, ang, att, life, place)
     if not cfg.Enabled() or not isstring(pcf) then return false end
     if not LVS_GRED_FX.Preload(pcf) then return false end
 
@@ -78,6 +78,8 @@ local function spawnFlash(pcf, ent, muzzlePos, ang, att, life)
             clear = true,
             ang = ang,
             roll = roll,
+            offset = place and place.offset or nil,
+            offsetAng = place and place.offsetAng or nil,
         })
         if ok then
             if cfg.DebugEnabled() then
@@ -105,18 +107,18 @@ end
 -- caller. The original addon did NOT layer extra spark/glow effects on top of
 -- the gred artillery blast — the gred_arti_muzzle_sparks layer made the
 -- muzzle read as "just a spark effect" instead of the complete flash.
-local function spawnArtillery(ent, muzzlePos, ang, att, life)
-    return spawnFlash(cfg.DefaultMuzzleByEffect.lvs_haubitze_muzzle or "gred_arti_muzzle_blast_alt", ent, muzzlePos, ang, att, life)
+local function spawnArtillery(ent, muzzlePos, ang, att, life, place)
+    return spawnFlash(cfg.DefaultMuzzleByEffect.lvs_haubitze_muzzle or "gred_arti_muzzle_blast_alt", ent, muzzlePos, ang, att, life, place)
 end
 
 -- Spawn a generic multi-layer flash for unknown lvs_*muzzle* effect names.
-local function spawnGenericMuzzle(ent, muzzlePos, ang, att)
+local function spawnGenericMuzzle(ent, muzzlePos, ang, att, place)
     local ok = false
 
     for i = 1, #cfg.GenericMuzzleFlash do
         local pcf = cfg.GenericMuzzleFlash[i]
         if pcf and pcf ~= "" then
-            ok = spawnFlash(pcf, ent, muzzlePos, ang, att, cfg.FlashLife) or ok
+            ok = spawnFlash(pcf, ent, muzzlePos, ang, att, cfg.FlashLife, place) or ok
         end
     end
 
@@ -196,9 +198,9 @@ function LVS_GRED_FX_MUZZLEFLASH.Spawn(effectName, self, data)
     -- Spawn on rootEnt (the entity that owns the resolved attachment) so the
     -- PATTACH_POINT_FOLLOW id matches the entity.
     if isArtillery then
-        ok = spawnArtillery(rootEnt, muzzlePos, ang, att, cfg.ArtilleryLife)
+        ok = spawnArtillery(rootEnt, muzzlePos, ang, att, cfg.ArtilleryLife, info)
     else
-        ok = spawnFlash(pcf, rootEnt, muzzlePos, ang, att, cfg.FlashLife)
+        ok = spawnFlash(pcf, rootEnt, muzzlePos, ang, att, cfg.FlashLife, info)
     end
 
     -- Barrel smoke: separate system, resolved with its own attachment lookup,
@@ -211,7 +213,7 @@ function LVS_GRED_FX_MUZZLEFLASH.Spawn(effectName, self, data)
     -- stopped emitting (cannon: vj burst first, lingering barrel smoke after).
     local smokeList = (map and map.smoke) or cfg.DefaultSmokeByEffect[effectName]
     if cfg.SmokeEnabled() and smokeList then
-        LVS_GRED_FX_BARRELSMOKE.SpawnSequence(rootEnt, muzzlePos, att, smokeList)
+        LVS_GRED_FX_BARRELSMOKE.SpawnSequence(rootEnt, muzzlePos, att, smokeList, info)
     end
 
     -- The tracer record sometimes arrives a frame after the muzzle effect
@@ -234,14 +236,14 @@ function LVS_GRED_FX_MUZZLEFLASH.Spawn(effectName, self, data)
                 or pcfNow == "gred_arti_muzzle_blast_alt"
 
             if artiNow then
-                spawnArtillery(rootEnt, muzzlePos, ang, att, cfg.ArtilleryLife)
+                spawnArtillery(rootEnt, muzzlePos, ang, att, cfg.ArtilleryLife, info)
             else
-                spawnFlash(pcfNow, rootEnt, muzzlePos, ang, att, cfg.FlashLife)
+                spawnFlash(pcfNow, rootEnt, muzzlePos, ang, att, cfg.FlashLife, info)
             end
 
             local smokeListNow = mapNow.smoke or cfg.DefaultSmokeByEffect[effectName]
             if cfg.SmokeEnabled() and smokeListNow then
-                LVS_GRED_FX_BARRELSMOKE.SpawnSequence(rootEnt, muzzlePos, att, smokeListNow)
+                LVS_GRED_FX_BARRELSMOKE.SpawnSequence(rootEnt, muzzlePos, att, smokeListNow, info)
             end
         end)
     end
