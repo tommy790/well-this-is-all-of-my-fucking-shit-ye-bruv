@@ -48,7 +48,7 @@ if not CLIENT then return end
 local cfg = LVS_GRED_FX.Config
 
 -- Printed in the pose diagnostics so a log can be matched to the code.
-LVS_GRED_FX.MUZZLE_BUILD = "pose-from-render-4"
+LVS_GRED_FX.MUZZLE_BUILD = "pose-from-render-5"
 
 -- Code point acceptance window (units). LVS fires from the attachment
 -- position itself; recoil moves the origin a few units back along the bore.
@@ -603,19 +603,34 @@ local function resolveImpl(ent, muzzlePos, dir, code, frameEnt, stepLocal, turre
     -- own flash does not recoil either). The model's attachment on the
     -- shot's bore line sits on the gun bone and does recoil; for this one
     -- gun's effect that is the frame. Nothing else reaches this branch.
-    if turretGun and dir then
-        local id, perp = resolveByAxis(ent, cache, muzzlePos, dir)
-        if id > 0 then
-            local att = LVS_GRED_FX.GetAttachmentData(ent, id)
-            if att then
-                local _, info = result(cache, id, "turret_bore_line", att.Pos:DistToSqr(muzzlePos))
-                info.perp, info.reader = perp, "model"
-                info.offset, info.offsetAng = frameOffset(muzzlePos, dir, att.Pos, att.Ang)
-                info.offsetShot = info.offset
-                local stepAtt = WorldToLocal(att.Pos + (stepLocal or vector_origin), angle_zero, att.Pos, att.Ang)
-                info.offset = steadyOffset(ent, id, { weaponId = "ballistics" }, info.offset, stepAtt, att)
-                return id, info
+    -- The fixed vector need not even be at the model's muzzle (Bison: 11 u
+    -- ahead of and 8 u beside the tip), so the origin is not used as a
+    -- position here at all: the attachment nearest the shot's bore line is
+    -- the barrel, and the flash sits ON it, oriented by the shot.
+    if turretGun and dir and cache.atts then
+        local bestId, bestPerp, bestAlong = 0, math.huge, 0
+        for i = 1, #cache.atts do
+            local id = cache.atts[i] and cache.atts[i].id
+            if id and id > 0 then
+                local att = LVS_GRED_FX.GetAttachmentData(ent, id)
+                if att then
+                    local v = att.Pos - muzzlePos
+                    local along = v:Dot(dir)
+                    local perp = (v - dir * along):Length()
+                    if perp < bestPerp and math.abs(along) <= MAX_NAMED_DIST then
+                        bestId, bestPerp, bestAlong = id, perp, along
+                    end
+                end
             end
+        end
+        if bestId > 0 and bestPerp <= MAX_NAMED_DIST then
+            local att = LVS_GRED_FX.GetAttachmentData(ent, bestId)
+            local _, info = result(cache, bestId, "turret_bore_line", att.Pos:DistToSqr(muzzlePos))
+            info.perp, info.reader = bestPerp, "model"
+            local _, lang = WorldToLocal(muzzlePos, dir:Angle(), att.Pos, att.Ang)
+            info.offset, info.offsetAng = Vector(0, 0, 0), lang
+            info.offsetShot = Vector(bestAlong, 0, 0)
+            return bestId, info
         end
     end
 
