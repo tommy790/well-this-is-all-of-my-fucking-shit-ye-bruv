@@ -487,21 +487,19 @@ local function resolveImpl(ent, muzzlePos, dir, code, frameEnt)
         end
         if id > 0 then
             local att = LVS_GRED_FX.GetAttachmentData(ent, id)
-            if att then
-                local onPoint = false
-                if dir then
-                    local v = att.Pos - muzzlePos
-                    local along = v:Dot(dir)
-                    local perp = (v - dir * along):Length()
-                    info.perp = perp
-                    -- On the point: within the sideways tolerance, from a
-                    -- hair ahead of the tip (Willys MG: 0.06 u) back to a
-                    -- recoiled origin behind it.
-                    onPoint = perp <= AXIS_PERP_MAX and along >= -AXIS_PERP_MAX and along <= AXIS_ALONG_MAX
-                end
-                if not onPoint then
+            if att and dir then
+                local v = att.Pos - muzzlePos
+                local along = v:Dot(dir)
+                info.perp = (v - dir * along):Length()
+                -- The flash is always driven from the attachment at the
+                -- shot's exact offset, oriented by the shot direction.
+                -- PATTACH_POINT_FOLLOW would orient it by the attachment's
+                -- own angles instead, which on many models point along a
+                -- different axis (the flash came out turned 90 degrees on
+                -- the shots that took that path).
+                info.offset, info.offsetAng = frameOffset(muzzlePos, dir, att.Pos, att.Ang)
+                if info.offset:Length() > AXIS_PERP_MAX then
                     info.method = "weapon_code_offset"
-                    info.offset, info.offsetAng = frameOffset(muzzlePos, dir, att.Pos, att.Ang)
                 end
             end
             return id, info
@@ -561,9 +559,11 @@ end
     ResolveMuzzleAttachment( ent, muzzlePos, effectDataAtt, gunKey, dir, weaponEnt )
 
     Returns attachment id (0 = none) and an info table:
-        method    = "weapon_code" | "weapon_code_axis"   (flash on the attachment)
-                  | "weapon_code_near" | "weapon_code_offset" | "entity_frame"
-        offset    = Vector, origin in the frame's local space (offset methods)
+        method    = "weapon_code" | "weapon_code_axis" | "weapon_code_near"
+                  | "weapon_code_offset" (origin more than a few units from
+                    the attachment) | "entity_frame"
+        offset    = Vector, origin in the frame's local space (always set
+                    when a fire direction is known)
         offsetAng = Angle,  shot direction in that space
         frameEnt  = entity whose transform the offset is relative to when
                     id == 0 (entity_frame)
