@@ -280,8 +280,12 @@ local function FinalizeAnchored(veh, data)
     timer.Remove("TIV_Lower_" .. veh:EntIndex())
 
     TIV.Anchor.AttachAll(veh, data)
-    if TIV.Spikes.GetCount(data) == 0 then TIV.Anchor.AttachWorld(veh, data) end
-    TIV.Anchor.ReleaseSprings(veh, data)
+    if TIV.Spikes.GetCount(data) == 0 then
+        TIV.Anchor.AttachWorld(veh, data)
+        TIV.Anchor.ReleaseSprings(veh, data)
+    else
+        TIV.Anchor.ReleaseCoveredSprings(veh, data)
+    end
     TIV.Anchor.UnfreezeForDeploy(veh)
 
     data.anchored   = true

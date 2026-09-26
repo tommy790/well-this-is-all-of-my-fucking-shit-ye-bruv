@@ -107,25 +107,24 @@ local function GroundTraceFilter(veh, data)
     end
 end
 
--- With no spikes fitted the mounts are still the spike mounts from the
--- vehicle's layout (TIV.Config.SpikeOffsets), so the springs and the world
--- sockets act at exactly the points the spike case is tuned for. An earlier
--- fallback used the render-bounds corners 8 u above the wheel bottoms: that
--- put the pull points a chassis-height lower and further outboard than any
--- spike mount, on a level where the ground trace could start inside a slope
--- and drop a corner, and the lopsided 8x-weight pull that followed is what
--- threw the vehicle around during the airbag stage.
+-- The airbag mounts are ALL the spike mounts of the vehicle's layout
+-- (TIV.Config.SpikeOffsets), whatever number of spikes is actually fitted:
+-- the airbags lower the whole vehicle, the spikes only decide where it is
+-- pinned afterwards. Using only the fitted spikes' mounts made a two-spike
+-- vehicle kneel on its nose. An earlier no-spike fallback used the
+-- render-bounds corners near the wheel bottoms, where the ground trace could
+-- start inside a slope and the lopsided pull threw the vehicle around.
 local function MountPoints(veh, data)
     local mounts = {}
-    for _, sd in ipairs(data.spikes or {}) do
-        local lp = sd.storedLocalPos or sd.localPos or sd.offset
-        if lp then mounts[#mounts + 1] = lp end
-    end
-    if #mounts > 0 then return mounts end
-
     local offsets = TIV.SpikeAnim and TIV.SpikeAnim.GetOffsetsForVehicle and TIV.SpikeAnim.GetOffsetsForVehicle(veh)
     for _, off in ipairs(offsets or {}) do
         if isvector(off.pos) then mounts[#mounts + 1] = Vector(off.pos.x, off.pos.y, off.pos.z) end
+    end
+    if #mounts > 0 then return mounts end
+
+    for _, sd in ipairs(data.spikes or {}) do
+        local lp = sd.storedLocalPos or sd.localPos or sd.offset
+        if lp then mounts[#mounts + 1] = lp end
     end
     if #mounts > 0 then return mounts end
 
@@ -138,6 +137,7 @@ local function MountPoints(veh, data)
         Vector(mins.x + ix, mins.y + iy, 0),
     }
 end
+TIV.Anchor.MountPoints = MountPoints
 
 -- Ground surface at a mount's x/y. The spike mounts sit at the chassis
 -- origin, i.e. at ground level on a jeep at ride height and BELOW the
@@ -160,8 +160,13 @@ end
 -- Returns the number of springs created. `lowerAmount` is how far the chassis
 -- should end up below its current height; the suspension is the real limit,
 -- the spring only supplies the pull. lowerAmount 0 just holds the current pose.
+local RemoveByType
+
 function TIV.Anchor.StartPullDown(veh, data, lowerAmount)
     if not IsValid(veh) then return 0 end
+    -- Springs kept through the anchored state (mounts with no spike) would
+    -- otherwise hold the old length against the new set.
+    RemoveByType(data, "elastic")
     -- game.GetWorld() is never IsValid(); constraint.* accepts it directly.
     local world = game.GetWorld()
     if not world then return 0 end
@@ -249,7 +254,7 @@ function TIV.Anchor.UpdateRaise(data, frac, riseAmount)
     end
 end
 
-local function RemoveByType(data, wanted)
+RemoveByType = function(data, wanted)
     for i = #(data.constraints or {}), 1, -1 do
         local c = data.constraints[i]
         if c.type == wanted then
@@ -263,6 +268,54 @@ end
 function TIV.Anchor.ReleaseSprings(veh, data)
     RemoveByType(data, "elastic")
     data.pullDown = nil
+end
+
+-- Once the spikes are locked, the springs at mounts a planted spike now
+-- holds are dropped; the springs at mounts WITHOUT a spike stay and keep
+-- that part of the vehicle down (the airbag under it is still inflated),
+-- so a partial spike set still holds the whole vehicle lowered. They go
+-- with everything else on retract or when the hold is broken.
+local COVER_RADIUS = 24
+function TIV.Anchor.ReleaseCoveredSprings(veh, data)
+    if not IsValid(veh) then return end
+    local planted = {}
+    for _, sd in ipairs(data.spikes or {}) do
+        if sd.phase == "deployed" and IsValid(sd.entity) then
+            planted[#planted + 1] = veh:WorldToLocal(sd.entity:GetPos())
+        end
+    end
+    if #planted == 0 then return end
+
+    local kept = {}
+    for i = #(data.constraints or {}), 1, -1 do
+        local c = data.constraints[i]
+        if c.type == "elastic" then
+            local covered = false
+            if c.localPos then
+                for _, lp in ipairs(planted) do
+                    if (Vector(lp.x, lp.y, 0) - Vector(c.localPos.x, c.localPos.y, 0)):Length() <= COVER_RADIUS then
+                        covered = true
+                        break
+                    end
+                end
+            end
+            if covered or not IsValid(c.constraint) then
+                if IsValid(c.constraint) then c.constraint:Remove() end
+                table.remove(data.constraints, i)
+            else
+                kept[#kept + 1] = c
+            end
+        end
+    end
+
+    if data.pullDown then
+        local remaining = {}
+        for _, e in ipairs(data.pullDown.elastics) do
+            if IsValid(e.con) then remaining[#remaining + 1] = e end
+        end
+        data.pullDown.elastics = remaining
+        if #remaining == 0 then data.pullDown = nil end
+    end
 end
 
 -- Drops the ballsockets only; the springs (if any) keep the body down.
