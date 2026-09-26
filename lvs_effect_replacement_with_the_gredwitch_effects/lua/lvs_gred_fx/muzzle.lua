@@ -647,7 +647,12 @@ local function resolveOnReference(ent, muzzlePos, dir, code, frameEnt, srcLocal,
 end
 
 --[[---------------------------------------------------------------------------
-    ResolveMuzzleAttachment( ent, muzzlePos, effectDataAtt, gunKey, dir, weaponEnt )
+    ResolveMuzzleAttachment( ent, muzzlePos, effectDataAtt, gunKey, dir, weaponEnt, srcLocal, turretGun )
+
+    srcLocal  = LVS's bullet.SrcEntity for the shot when known
+    turretGun = true when the effect belongs to the vehicle's turret-
+                ballistics gun (howitzer effects), which lets the vehicle's
+                TurretBallisticsMuzzleAttachment stand in for weapon code
 
     Returns attachment id (0 = none) and an info table:
         method    = "weapon_code" | "weapon_code_axis" | "weapon_code_near"
@@ -664,7 +669,7 @@ end
     LVS's EffectData attachment id is unreliable and nothing is remembered
     between shots because nothing is estimated.
 -----------------------------------------------------------------------------]]
-function LVS_GRED_FX.ResolveMuzzleAttachment(ent, muzzlePos, effectDataAtt, gunKey, dir, weaponEnt, srcLocal)
+function LVS_GRED_FX.ResolveMuzzleAttachment(ent, muzzlePos, effectDataAtt, gunKey, dir, weaponEnt, srcLocal, turretGun)
     if not IsValid(ent) then return 0, { method = "none", reason = "invalid entity" } end
     if not isvector(muzzlePos) then return 0, { method = "none", reason = "invalid muzzle position" } end
     if isvector(dir) and dir:LengthSqr() > 0.0001 then dir = dir:GetNormalized() else dir = nil end
@@ -680,6 +685,20 @@ function LVS_GRED_FX.ResolveMuzzleAttachment(ent, muzzlePos, effectDataAtt, gunK
     -- carries the selected weapon; `ent` is the root the attachments live on.
     local weaponHolder = IsValid(weaponEnt) and weaponEnt or ent
     local code = LVS_GRED_FX_WEAPONCODE.AttachmentsFor(weaponHolder, ent)
+
+    -- The turret-ballistics gun (howitzer effects) is configured by the
+    -- vehicle itself: TurretBallisticsMuzzleAttachment is the muzzle LVS
+    -- computes its shell drop and crosshair from. When the Attack reader
+    -- names nothing for that gun, this configuration is the code. Only for
+    -- the ballistics gun's own effect: a preset coax MG must not inherit
+    -- the cannon's muzzle.
+    if not code and turretGun and isstring(ent.TurretBallisticsMuzzleAttachment) then
+        local name = ent.TurretBallisticsMuzzleAttachment
+        local id = ent.LookupAttachment and ent:LookupAttachment(name) or 0
+        if id and id > 0 then
+            code = { ids = { id }, names = { name }, reader = "turret_ballistics", weaponId = "ballistics" }
+        end
+    end
 
     -- With LVS's server-local origin the entity frame is the base vehicle's
     -- (SrcEntity is expressed in it, also for gunner pods); otherwise the

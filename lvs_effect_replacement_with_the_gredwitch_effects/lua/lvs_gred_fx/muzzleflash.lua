@@ -196,7 +196,7 @@ spawnResolved = function(effectName, ent, muzzlePos, normal, dataAtt)
     -- Resolve the correct muzzle attachment (never "attachment 1" guessing);
     -- remembered per vehicle + gun after the first shot.
     local att, info = LVS_GRED_FX.ResolveMuzzleAttachment(rootEnt, muzzlePos, dataAtt, gunKey, normal, ent,
-        rec and rec.srcLocal or nil)
+        rec and rec.srcLocal or nil, effectName == "lvs_haubitze_muzzle")
 
     if cfg.DebugEnabled() then
         Debug("muzzle attachment:", "id:", att, "method:", info and info.method,
