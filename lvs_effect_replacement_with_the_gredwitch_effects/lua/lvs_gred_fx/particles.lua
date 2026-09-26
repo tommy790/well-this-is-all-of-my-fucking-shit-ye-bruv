@@ -132,8 +132,10 @@ end
 -- Why a proxy entity and not a Lua-driven control point: the engine updates
 -- attachment-followed particles inside its own simulation step, later than
 -- any Lua hook runs, so a control point set from Lua is a frame behind --
--- measured as a visible trail at 800 u/s, while PATTACH_POINT_FOLLOW on
--- the same attachment was clean. PATTACH_POINT_FOLLOW cannot carry an
+-- seen as a visible trail at 800 u/s in an A/B against PATTACH_POINT_FOLLOW
+-- on the same attachment, which was clean. The same A/B showed gred's
+-- unlocked flash PCFs trailing even on the proxy: the control-point-locked
+-- copies (lvs_gred_muzzle.pcf) are required, not cosmetic. PATTACH_POINT_FOLLOW cannot carry an
 -- offset and orients by the attachment's own axis, so instead a hidden
 -- clientside entity is parented to the vehicle ROOT (a plain parent: a
 -- proxy parented to an attachment is not re-evaluated with bone motion)
@@ -237,81 +239,17 @@ local function spawnFollower(name, ent, attID, opts)
     return psys
 end
 
--- Old Lua-driven control point follower, kept for the A/B switch (mode 3).
-local CP_FOLLOWERS = {}
-local function cpPose(f)
-    local ent = f.ent
-    if not IsValid(ent) then return nil end
-    if f.att > 0 then
-        if ent.SetupBones then ent:SetupBones() end
-        local a = ent:GetAttachment(f.att)
-        if not a or not isvector(a.Pos) then return nil end
-        return LocalToWorld(f.offset, f.offsetAng, a.Pos, a.Ang)
-    end
-    return LocalToWorld(f.offset, f.offsetAng, ent:GetPos(), ent:GetAngles())
-end
-local function cpDrive(f)
-    local pos, ang = cpPose(f)
-    if not pos then return false end
-    f.psys:SetControlPoint(0, pos)
-    if f.roll then ang:RotateAroundAxis(ang:Forward(), f.roll) end
-    f.psys:SetControlPointOrientation(0, ang:Forward(), ang:Right(), ang:Up())
-    return true
-end
-hook.Add("PreRender", "lvs_gred_fx_cp_followers", function()
-    local now = CurTime()
-    for i = #CP_FOLLOWERS, 1, -1 do
-        local f = CP_FOLLOWERS[i]
-        if now >= f.until_ or not LVS_GRED_FX.PsysValid(f.psys) or f.psys:IsFinished() or not cpDrive(f) then
-            if LVS_GRED_FX.PsysValid(f.psys) then pcall(f.psys.StopEmission, f.psys, false, true) end
-            table.remove(CP_FOLLOWERS, i)
-        end
-    end
-end)
-local function spawnCpFollower(name, ent, attID, opts)
-    local f = {
-        ent = (attID == 0 and IsValid(opts.frameEnt)) and opts.frameEnt or ent,
-        att = attID or 0, offset = opts.offset,
-        offsetAng = isangle(opts.offsetAng) and opts.offsetAng or angle_zero,
-        roll = opts.roll, until_ = CurTime() + (opts.life or 1) + FOLLOW_GRACE,
-    }
-    local pos = cpPose(f)
-    if not pos then return nil end
-    local ok, psys = pcall(CreateParticleSystem, ent, name, PATTACH_CUSTOMORIGIN, 0, pos)
-    if not ok or not LVS_GRED_FX.PsysValid(psys) then return nil end
-    f.psys = psys
-    cpDrive(f)
-    CP_FOLLOWERS[#CP_FOLLOWERS + 1] = f
-    if opts.life then LVS_GRED_FX.StopAfter(psys, opts.life, opts.clear) end
-    return psys
-end
-
--- A/B switch for diagnosing follow lag at speed:
---   0 = proxy entity parented to the root, engine-followed  [default]
---   1 = engine PATTACH_POINT_FOLLOW on the attachment (position exact,
---       orientation from the attachment's own axis, offset ignored)
---   2 = mode 0 with the original unlocked gred PCF
---   3 = the old Lua-driven control point follower
-local CvarFollowMode = CreateClientConVar("lvs_gred_fx_follow_mode", "0", false, false,
-    "0 proxy follow (default), 1 engine attachment follow, 2 proxy with unlocked PCF, 3 Lua control point. Diagnostic.")
-
 function LVS_GRED_FX.SpawnAttached(name, ent, attID, opts)
     if not cfg.Enabled() or not isstring(name) then return nil end
     if not IsValid(ent) then return nil end
     opts = opts or {}
     attID = attID or 0
 
-    local mode = CvarFollowMode:GetInt()
-    if mode == 2 and name:sub(1, 4) == "lvs_" then
-        local orig = name:sub(5)
-        if LVS_GRED_FX.Preload(orig) then name = orig end
-    end
-
-    if isvector(opts.offset) and not (mode == 1 and attID > 0) then
+    if isvector(opts.offset) then
         if not LVS_GRED_FX.Preload(name) then return nil end
-        local psys = (mode == 3) and spawnCpFollower(name, ent, attID, opts) or spawnFollower(name, ent, attID, opts)
+        local psys = spawnFollower(name, ent, attID, opts)
         if psys or attID <= 0 then return psys end
-        -- Could not drive the point: attach to the attachment itself below.
+        -- Could not build the proxy: attach to the attachment itself below.
     end
 
     if attID <= 0 then return nil end

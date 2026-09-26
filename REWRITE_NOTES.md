@@ -98,6 +98,18 @@ stacking wrappers; particle systems used after being freed (crash on map change)
   fallback remains.
 - Persistent LVS effects (ammo-rack fire, defence smoke) are one particle system each,
   kept alive exactly as long as LVS keeps sending the effect (`persistent.lua`).
+- Muzzle following: the shot origin comes from LVS's server-side `SrcEntity` (lag-free
+  local origin); a gun's constant offset from its code attachment is learned only from
+  shots with the mount at rest (server/client mount smoothing diverges during swings),
+  with a per-gun choice of the one-tick server-origin correction and any rearward
+  along-bore part dropped (server-side recoil). Followed effects ride a hidden proxy
+  parented to the vehicle root with `PATTACH_ABSORIGIN_FOLLOW` -- a Lua-driven control
+  point is always a frame behind the engine's particle update (A/B-verified at 800 u/s)
+  -- and gred's flash PCFs are shipped as control-point-locked copies
+  (`particles/lvs_gred_muzzle.pcf`, `pcf_tool.py build-muzzle`) because their
+  world-space particles trail a fast vehicle. The frozen reference model copies every
+  rendered pose parameter (never LVS's turret accessors, which read 0 on some clients),
+  bone manipulations and bodygroups.
 - Tracers: `particles/lvs_gred_tracers.pcf`, generated from gred's tracer definitions
   by `tools/pcf_tool.py`, launches the gred tracer particle at the LVS round's own
   velocity (previous-position remap on control point 1; engine-verified first-frame

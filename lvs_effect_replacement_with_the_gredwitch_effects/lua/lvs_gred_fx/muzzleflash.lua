@@ -86,9 +86,8 @@ local function spawnFlash(pcf, ent, muzzlePos, ang, att, life, place)
         })
         if ok then
             if cfg.DebugEnabled() then
-                Debug("muzzle flash:", pcf, "attached att:", att,
-                    "name:", LVS_GRED_FX.AttachmentName(ent, att),
-                    "POINT_FOLLOW:", ok == true and "yes" or "yes(handle)")
+                Debug("muzzle flash:", pcf, "att:", att,
+                    "name:", LVS_GRED_FX.AttachmentName(ent, att))
             end
             return true
         end
