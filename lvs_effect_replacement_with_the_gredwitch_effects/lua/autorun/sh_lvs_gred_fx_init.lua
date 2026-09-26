@@ -36,5 +36,6 @@ end
 
 if SERVER then
     resource.AddSingleFile("particles/lvs_gred_tracers.pcf")
+    resource.AddSingleFile("particles/lvs_gred_muzzle.pcf")
     include("lvs_gred_fx/sv_tracer.lua")
 end

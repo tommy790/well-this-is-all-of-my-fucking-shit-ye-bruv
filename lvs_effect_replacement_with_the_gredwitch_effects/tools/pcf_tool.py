@@ -6,6 +6,7 @@ from Gredwitch's gred_particles.pcf.
     python3 pcf_tool.py list  <file.pcf>
     python3 pcf_tool.py dump  <file.pcf> <definition name>
     python3 pcf_tool.py build <gred_particles.pcf> <impact_fx_ins.pcf> <out.pcf>
+    python3 pcf_tool.py build-muzzle <gred particles dir> <out.pcf> <definition names...>
 
 What `build` does, per gred_tracers_<color>_<caliber> definition:
   * deep-copies the definition and everything it references (operators,
@@ -377,6 +378,91 @@ def build(src_path, remap_src, out_path):
         print("  " + n)
 
 
+# ---------------------------------------------------------------------------
+# build-muzzle: gred muzzle flash definitions locked to their control point
+# ---------------------------------------------------------------------------
+# The Insurgency / Day of Infamy muzzle PCFs gred ships were made for a
+# shooter standing still: emitted particles live in world space. On a
+# vehicle doing hundreds of units per second a 0.1 s flash smears 30 u
+# behind the barrel and its smoke is dropped in the air. Each copied
+# definition (and every child, recursively) gets "Movement Lock to Control
+# Point" on CP0 -- the point the addon drives from the barrel every frame:
+#   * flash parts (lifetime_max <= FLASH_LIFE): locked for their whole life,
+#   * longer-lived parts (the flash's own smoke): the lock fades linearly
+#     over the particle's life (start_fadeout 0 -> end_fadeout 1), i.e. it
+#     leaves the barrel with the vehicle's velocity and sheds it as it ages,
+#     the way smoke with drag does, instead of being dropped in place.
+FLASH_LIFE = 0.3
+
+
+def find_definition(readers, name):
+    for r in readers:
+        for d in definitions(r):
+            if d.name == name:
+                return d
+    return None
+
+
+def lifetime_max(d):
+    for op in d.get("initializers") or []:
+        if op is not None and op.name == "Lifetime Random":
+            return op.get("lifetime_max") or 0.0
+    return 0.0
+
+
+def build_muzzle(pcf_dir, out_path, names):
+    import glob
+    readers = []
+    for f in sorted(glob.glob(os.path.join(pcf_dir, "*.pcf"))):
+        try:
+            readers.append(Reader(open(f, "rb").read()))
+        except Exception:
+            pass
+    lock_tpl = None
+    for r in readers:
+        lock_tpl = find_operator(definitions(r), "Movement Lock to Control Point")
+        if lock_tpl is not None:
+            break
+    if lock_tpl is None:
+        raise SystemExit("no Movement Lock to Control Point template found")
+
+    memo = {}
+    roots = []
+    for name in names:
+        d = find_definition(readers, name)
+        if d is None:
+            print("missing:", name)
+            continue
+        roots.append(deep_copy(d, memo))
+
+    copied = [e for e in memo.values() if e.type == "DmeParticleSystemDefinition"]
+    for c in copied:
+        c.name = "lvs_" + c.name
+        ops = [op for op in (c.get("operators") or []) if op is None or op.name != "Movement Lock to Control Point"]
+        flash = lifetime_max(c) <= FLASH_LIFE
+        ops.insert(0, make_operator(lock_tpl, {
+            "control_point_number": 0,
+            "start_fadeout_min": 1.0 if flash else 0.0,
+            "start_fadeout_max": 1.0 if flash else 0.0,
+            "end_fadeout_min": 1.0,
+            "end_fadeout_max": 1.0,
+            "lock rotation": 0,
+        }))
+        c.set("operators", ops)
+
+    root = Element("DmElement", "particleSystemDefinitions", os.urandom(16))
+    root.attrs.append(["particleSystemDefinitions", T_ELEMENT + ARRAY_OFFSET, roots])
+    acc = {}
+    reachable(root, acc)
+    elements = [root] + [e for e in acc.values() if e is not root]
+    data = Writer(elements).build()
+    open(out_path, "wb").write(data)
+    check = Reader(data)
+    print("wrote %s: %d elements, %d definitions" % (out_path, len(check.elements), len(definitions(check))))
+    for d in sorted(definitions(check), key=lambda e: e.name):
+        print("  %s (lifetime %.2f, %s)" % (d.name, lifetime_max(d), "locked" if lifetime_max(d) <= FLASH_LIFE else "lock fades"))
+
+
 def main():
     if len(sys.argv) < 3:
         print(__doc__)
@@ -392,6 +478,8 @@ def main():
                 dump(d)
     elif cmd == "build":
         build(path, sys.argv[3], sys.argv[4])
+    elif cmd == "build-muzzle":
+        build_muzzle(path, sys.argv[3], sys.argv[4:])
     else:
         print(__doc__)
 

@@ -74,7 +74,7 @@ local function spawnFlash(pcf, ent, muzzlePos, ang, att, life, place)
 
     local hasOffset = place and isvector(place.offset)
     if hasOffset or (att and att > 0 and LVS_GRED_FX.ValidAttachment(ent, att)) then
-        local ok = LVS_GRED_FX.SpawnAttached(pcf, ent, att, {
+        local ok = LVS_GRED_FX.SpawnAttached(LVS_GRED_FX.LockedVariant(pcf), ent, att, {
             life = life,
             clear = true,
             ang = ang,

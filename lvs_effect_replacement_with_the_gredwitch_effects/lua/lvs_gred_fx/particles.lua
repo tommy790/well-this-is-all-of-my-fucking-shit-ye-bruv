@@ -109,6 +109,24 @@ end
 
     Returns: psys handle, `true` (spawned via ParticleEffectAttach), or nil.
 -----------------------------------------------------------------------------]]
+-- Muzzle flash variants locked to their control point (tools/pcf_tool.py
+-- build-muzzle, particles/lvs_gred_muzzle.pcf): gred's Insurgency/DoI flash
+-- PCFs emit world-space particles, which a fast vehicle leaves behind. The
+-- copies follow CP0 -- the barrel point this addon drives -- so the flash
+-- stays on the muzzle at any speed. Used whenever the copy exists.
+local LOCKED_PCF = "particles/lvs_gred_muzzle.pcf"
+game.AddParticles(LOCKED_PCF)
+local LOCKED = {}
+function LVS_GRED_FX.LockedVariant(name)
+    if not isstring(name) then return name end
+    local cached = LOCKED[name]
+    if cached ~= nil then return cached or name end
+    local variant = "lvs_" .. name
+    local ok, res = pcall(PrecacheParticleSystem, variant)
+    LOCKED[name] = (ok and res ~= false) and variant or false
+    return LOCKED[name] or name
+end
+
 -- Offset followers. A particle whose control point 0 is driven every frame
 -- to (attachment transform) x (local offset): used when the weapon's code
 -- fires from a point that is not itself an attachment (a barrel offset
