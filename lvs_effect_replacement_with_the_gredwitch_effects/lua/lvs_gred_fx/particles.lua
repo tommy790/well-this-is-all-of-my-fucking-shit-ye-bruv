@@ -49,11 +49,19 @@ function LVS_GRED_FX.Preload(name)
     return PRECACHED[name]
 end
 
+-- The world entity is what gred's own effects host world particles on, but
+-- on the client the global IsValid() is false for it (it checks IsEntity
+-- and the world fails that), so it is identified by IsWorld() instead.
+-- Checking IsValid here made every handle-based world spawn in this addon
+-- fail silently and fall back to the LVS original (smoke canisters, water
+-- spray, the haubitze beam).
 local function worldHost()
     local w = game.GetWorld()
-    if IsValid(w) then return w end
+    if w and w.IsWorld and w:IsWorld() then return w end
     local z = Entity(0)
-    if IsValid(z) then return z end
+    if z and z.IsWorld and z:IsWorld() then return z end
+    local lp = LocalPlayer()
+    if IsValid(lp) then return lp end
     return nil
 end
 
