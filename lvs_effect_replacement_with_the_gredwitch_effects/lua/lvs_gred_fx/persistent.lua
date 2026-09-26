@@ -131,6 +131,19 @@ end
 local SMOKE_CADENCE    = 0.2    -- lvs_item_smoke: SetNextClientThink(T + 0.2)
 local SMOKE_MATCH_DIST = 96
 
+-- Debug: which LVS items appear on the client when smoke is deployed, so a
+-- renamed canister class or effect on a newer LVS shows up in the log.
+hook.Add("OnEntityCreated", "lvs_gred_fx_smoke_trace", function(ent)
+    if not cfg.DebugEnabled() then return end
+    timer.Simple(0, function()
+        if not IsValid(ent) then return end
+        local class = ent:GetClass()
+        if class:find("smoke", 1, true) or class:find("lvs_item", 1, true) then
+            LVS_GRED_FX.Debug("entity created:", class, "model:", ent:GetModel())
+        end
+    end)
+end)
+
 function P.SmokeScreen(name, self, data)
     self._gmode = "oneshot"
     if not cfg.Enabled() then return false end

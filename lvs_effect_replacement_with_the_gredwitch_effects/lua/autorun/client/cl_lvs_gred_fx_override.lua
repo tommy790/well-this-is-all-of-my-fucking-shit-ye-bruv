@@ -305,6 +305,13 @@ local function registerOverride(effectName)
         self._lvs_gred_effect_name = effectName
         self._lvs_gred_fx_handled = false
 
+        -- Low-rate effects get a trace so "nothing printed" can be told
+        -- apart from "never fired" (smoke canisters).
+        if effectName == "lvs_defence_smoke" and LVS_GRED_FX.Config.DebugEnabled() then
+            LVS_GRED_FX.DebugOnce("fired:" .. effectName, "effect fired:", effectName,
+                "origin:", tostring(data.GetOrigin and data:GetOrigin()))
+        end
+
         if not isEnabled() then
             callOriginalInit(effectName, self, data)
             return
