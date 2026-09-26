@@ -47,6 +47,9 @@ if not CLIENT then return end
 
 local cfg = LVS_GRED_FX.Config
 
+-- Printed in the pose diagnostics so a log can be matched to the code.
+LVS_GRED_FX.MUZZLE_BUILD = "pose-from-render-1"
+
 -- Code point acceptance window (units). LVS fires from the attachment
 -- position itself; recoil moves the origin a few units back along the bore.
 local MAX_NAMED_DIST = 32   -- a code point further than this is not this shot's
@@ -187,7 +190,7 @@ local function captureTurretPose(ref, veh)
         -- Bypasses the per-second line budget: these three lines are the
         -- ones needed when everything else is being suppressed.
         local Debug = function(...) print("[lvs_gred_fx][pose]", ...) end
-        Debug("turret accessors:", "yaw", veh.GetTurretYaw and veh:GetTurretYaw() or "-",
+        Debug("build:", LVS_GRED_FX.MUZZLE_BUILD, "turret accessors:", "yaw", veh.GetTurretYaw and veh:GetTurretYaw() or "-",
             "pitch", veh.GetTurretPitch and veh:GetTurretPitch() or "-",
             "names", tostring(veh.TurretYawPoseParameterName), tostring(veh.TurretPitchPoseParameterName),
             "mul/off", tostring(veh.TurretYawMul), tostring(veh.TurretYawOffset))
