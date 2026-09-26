@@ -188,6 +188,45 @@ local function captureTurretPose(ref, veh)
 
     ref:InvalidateBoneCache()
     ref:SetupBones()
+
+    -- Pose diagnostics (once a second per vehicle): what the live vehicle
+    -- reports, what the reference ended up with, and where each attachment
+    -- sits on both in hull space. A drifting attachment shows up here as a
+    -- growing live/ref gap with the pose values that failed to carry it.
+    if cfg.DebugEnabled() and CurTime() - (veh._lvsGredPoseLog or 0) > 1 then
+        veh._lvsGredPoseLog = CurTime()
+        local parts = {}
+        for i = 0, nPose - 1 do
+            local pname = veh:GetPoseParameterName(i)
+            local pmin, pmax = veh:GetPoseParameterRange(i)
+            parts[#parts + 1] = string.format("%s=%.3f[%.0f..%.0f]->%.3f", tostring(pname),
+                veh:GetPoseParameter(pname) or -999, pmin or 0, pmax or 0, ref:GetPoseParameter(pname) or -999)
+        end
+        Debug("pose:", table.concat(parts, " "))
+        local manip = {}
+        for b = 0, bones - 1 do
+            local a = veh:GetManipulateBoneAngles(b)
+            if a and a ~= angle_zero then
+                manip[#manip + 1] = string.format("%s=%s", tostring(veh:GetBoneName(b)), tostring(a))
+            end
+        end
+        Debug("bone manip:", #manip > 0 and table.concat(manip, " ") or "none")
+        local ok, atts = pcall(veh.GetAttachments, veh)
+        if ok and istable(atts) then
+            if veh.SetupBones then pcall(veh.SetupBones, veh) end
+            local gaps = {}
+            for _, a in ipairs(atts) do
+                local la = veh:GetAttachment(a.id)
+                local ra = ref:GetAttachment(a.id)
+                if la and ra then
+                    local liveLocal = veh:WorldToLocal(la.Pos)
+                    local refLocal  = ra.Pos - REF_ORIGIN
+                    gaps[#gaps + 1] = string.format("%s:%.1f", tostring(a.name), liveLocal:Distance(refLocal))
+                end
+            end
+            Debug("attachment live/ref gap:", table.concat(gaps, " "))
+        end
+    end
 end
 
 local function referenceFor(veh, shotId)
