@@ -223,13 +223,28 @@ local function spawnFollower(name, ent, attID, opts)
     return psys
 end
 
+-- A/B switch for diagnosing follow lag at speed:
+--   0 = follower (control point driven from Lua each frame)  [default]
+--   1 = engine PATTACH_POINT_FOLLOW on the attachment (position exact by
+--       construction, orientation from the attachment's own axis, offset
+--       ignored) -- for comparison only
+--   2 = follower, but with the original unlocked gred PCF (no lock operator)
+local CvarFollowMode = CreateClientConVar("lvs_gred_fx_follow_mode", "0", false, false,
+    "0 follower (default), 1 engine attachment follow, 2 follower with unlocked PCF. Diagnostic.")
+
 function LVS_GRED_FX.SpawnAttached(name, ent, attID, opts)
     if not cfg.Enabled() or not isstring(name) then return nil end
     if not IsValid(ent) then return nil end
     opts = opts or {}
     attID = attID or 0
 
-    if isvector(opts.offset) then
+    local mode = CvarFollowMode:GetInt()
+    if mode == 2 and name:sub(1, 4) == "lvs_" then
+        local orig = name:sub(5)
+        if LVS_GRED_FX.Preload(orig) then name = orig end
+    end
+
+    if isvector(opts.offset) and not (mode == 1 and attID > 0) then
         if not LVS_GRED_FX.Preload(name) then return nil end
         local psys = spawnFollower(name, ent, attID, opts)
         if psys or attID <= 0 then return psys end
