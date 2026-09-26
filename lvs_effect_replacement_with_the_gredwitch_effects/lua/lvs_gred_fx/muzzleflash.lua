@@ -81,6 +81,7 @@ local function spawnFlash(pcf, ent, muzzlePos, ang, att, life, place)
             roll = roll,
             offset = hasOffset and place.offset or nil,
             offsetAng = hasOffset and place.offsetAng or nil,
+            offsetShot = hasOffset and place.offsetShot or nil,
             frameEnt = place and place.frameEnt or nil,
         })
         if ok then

@@ -191,7 +191,7 @@ local function spawnFollower(name, ent, attID, opts)
         Debug(f.att > 0 and "follow attachment + offset:" or "follow entity frame:", name,
             "ent:", f.ent:GetClass(), "att:", f.att,
             "name:", f.att > 0 and LVS_GRED_FX.AttachmentName(ent, f.att) or "-",
-            "offset:", tostring(opts.offset))
+            "offset:", tostring(opts.offset), "this shot:", tostring(opts.offsetShot or opts.offset))
     end
     return psys
 end

@@ -113,6 +113,7 @@ function LVS_GRED_FX_BARRELSMOKE.Spawn(ent, muzzlePos, att, pcf, place)
             forceHandle = true,
             offset = hasOffset and place.offset or nil,
             offsetAng = hasOffset and place.offsetAng or nil,
+            offsetShot = hasOffset and place.offsetShot or nil,
             frameEnt = place and place.frameEnt or nil,
         })
     end

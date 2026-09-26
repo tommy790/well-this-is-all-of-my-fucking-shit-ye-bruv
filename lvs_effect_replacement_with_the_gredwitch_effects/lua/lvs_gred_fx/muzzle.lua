@@ -461,6 +461,40 @@ local function resolveByWeaponCode(ent, cache, muzzlePos, dir, code)
     return 0, "shot origin not at the code's attachment(s)"
 end
 
+-- The server and the client each smooth a gun mount's aim on their own
+-- (LVS runs the same approach code on both sides; nothing per-frame is
+-- networked), so while a mount swings fast the server's origin sits a few
+-- units beside the barrel the client renders (Willys pintle MG: up to 8 u
+-- at ~40 u arm). That is transient; a gun that really fires beside its
+-- attachment (BMD-4M 30mm, 12 u) shows the same offset on every shot. The
+-- per-component median of the recent shots for this vehicle class,
+-- attachment and weapon keeps the constant and sheds the swing noise, so
+-- the flash sits on the rendered barrel.
+local STEADY_SAMPLES = 8
+local STEADY = {}
+local function median(list)
+    local t = {}
+    for i = 1, #list do t[i] = list[i] end
+    table.sort(t)
+    local n = #t
+    if n % 2 == 1 then return t[(n + 1) / 2] end
+    return (t[n / 2] + t[n / 2 + 1]) * 0.5
+end
+local function steadyOffset(ent, id, code, offset)
+    local key = ent:GetClass() .. "|" .. id .. "|" .. tostring(code and code.weaponId or "")
+    local rec = STEADY[key]
+    if not rec then
+        rec = { x = {}, y = {}, z = {} }
+        STEADY[key] = rec
+    end
+    for _, axis in ipairs({ "x", "y", "z" }) do
+        local list = rec[axis]
+        list[#list + 1] = offset[axis]
+        if #list > STEADY_SAMPLES then table.remove(list, 1) end
+    end
+    return Vector(median(rec.x), median(rec.y), median(rec.z))
+end
+
 -- Origin expressed in the frame of (framePos, frameAng).
 local function frameOffset(muzzlePos, dir, framePos, frameAng)
     local ang = dir and dir:Angle() or frameAng
@@ -498,6 +532,8 @@ local function resolveImpl(ent, muzzlePos, dir, code, frameEnt)
                 -- different axis (the flash came out turned 90 degrees on
                 -- the shots that took that path).
                 info.offset, info.offsetAng = frameOffset(muzzlePos, dir, att.Pos, att.Ang)
+                info.offsetShot = info.offset
+                info.offset = steadyOffset(ent, id, code, info.offset)
                 if info.offset:Length() > AXIS_PERP_MAX then
                     info.method = "weapon_code_offset"
                 end
