@@ -139,6 +139,29 @@ local function captureTurretPose(ref, veh)
     ref:SetPos(REF_ORIGIN)
     ref:SetAngles(angle_zero)
 
+    -- Every pose parameter, not just the main turret's: multi-turret
+    -- vehicles (T-35) drive their secondary turrets and MGs through their
+    -- own pose parameters. The client reads a pose parameter back
+    -- normalised (0..1 across its range), so it is mapped through the
+    -- range before being written.
+    local nPose = veh.GetNumPoseParameters and veh:GetNumPoseParameters() or 0
+    for i = 0, nPose - 1 do
+        local pname = veh:GetPoseParameterName(i)
+        if isstring(pname) and pname ~= "" then
+            local pmin, pmax = veh:GetPoseParameterRange(i)
+            local norm = veh:GetPoseParameter(pname)
+            if isnumber(norm) and isnumber(pmin) and isnumber(pmax) then
+                local value = norm
+                if norm >= 0 and norm <= 1 and (pmin < 0 or pmax > 1) then
+                    value = pmin + norm * (pmax - pmin)
+                end
+                ref:SetPoseParameter(pname, value)
+            end
+        end
+    end
+
+    -- The main turret from LVS's own accessors, exact (the normalised
+    -- read-back of a looping yaw is ambiguous at the wrap).
     local yawName, pitchName = veh.TurretYawPoseParameterName, veh.TurretPitchPoseParameterName
     if isstring(yawName) and yawName ~= "" and veh.GetTurretYaw then
         ref:SetPoseParameter(yawName, (veh.TurretYawOffset or 0) + (veh:GetTurretYaw() or 0) * (veh.TurretYawMul or 1))
