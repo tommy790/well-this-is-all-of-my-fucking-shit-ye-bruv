@@ -48,7 +48,7 @@ if not CLIENT then return end
 local cfg = LVS_GRED_FX.Config
 
 -- Printed in the pose diagnostics so a log can be matched to the code.
-LVS_GRED_FX.MUZZLE_BUILD = "proxy-follow-2"
+LVS_GRED_FX.MUZZLE_BUILD = "proxy-follow-3"
 
 -- Code point acceptance window (units). LVS fires from the attachment
 -- position itself; recoil moves the origin a few units back along the bore.
@@ -473,9 +473,9 @@ end
 --    shots fired with the mount at rest -- attachment not moved in hull
 --    space since the previous shot -- update the gun's steady offset, and
 --    that steady value is what is applied while it moves. Before any calm
---    shot exists the flash sits on the attachment itself (offset zero):
---    that is what the weapon code says, and nothing measured yet says
---    otherwise.
+--    shot exists the flash sits on the attachment itself (offset zero)
+--    unless the raw offset is clearly a different barrel of a shared-point
+--    mount, in which case the raw offset is used.
 --  * Staleness. Some LVS fire paths build the origin from a server
 --    attachment position that is one tick old (T-35 turret: the offset grew
 --    with speed and one tick of hull velocity removed it); others do not
@@ -515,12 +515,19 @@ local function weaponKey(ent, code)
     return ent:GetClass() .. "|" .. tostring(code and code.weaponId or "")
 end
 
+-- Shared-point mounts (Pz.IV Zerstörer: code names "aim", four barrels at
+-- (+-10, +-15) from it) put several barrels behind ONE attachment, so the
+-- samples are grouped by barrel: a shot joins the group whose centre it is
+-- within GROUP_RADIUS of, otherwise starts a new one. Single-barrel guns
+-- form one group; each barrel keeps its own median and tick estimate.
+local GROUP_RADIUS = 8
+
 local LAST_TICK_COMP, LAST_TICK_K, LAST_CALM = 0, 0, false
 local function steadyOffset(ent, id, code, rawOffset, stepOffset, att)
     local key = ent:GetClass() .. "|" .. id .. "|" .. tostring(code and code.weaponId or "")
     local rec = STEADY[key]
     if not rec then
-        rec = { samples = {} }
+        rec = { groups = {} }
         STEADY[key] = rec
     end
 
@@ -532,21 +539,35 @@ local function steadyOffset(ent, id, code, rawOffset, stepOffset, att)
     rec.lastPos, rec.lastAng = Vector(att.Pos), Angle(att.Ang)
     LAST_CALM = calm
 
-    if calm then
-        rec.samples[#rec.samples + 1] = { raw = rawOffset, step = stepOffset }
-        if #rec.samples > STEADY_SAMPLES then table.remove(rec.samples, 1) end
-    end
-    -- No shot with the mount at rest yet (a pintle MG on a bouncing jeep may
-    -- never be still): the weapon code says the gun fires from this
-    -- attachment, and nothing measured contradicts it, so the flash goes on
-    -- the attachment. A constant offset is applied once it has been seen at
-    -- rest.
-    if #rec.samples == 0 then
-        LAST_TICK_K, LAST_TICK_COMP = 0, 0
-        return vector_origin
+    -- The barrel this shot belongs to.
+    local group, best = nil, GROUP_RADIUS
+    for _, g in ipairs(rec.groups) do
+        local d = g.center:Distance(rawOffset)
+        if d <= best then group, best = g, d end
     end
 
-    local m0, m1 = medianOffset(rec.samples, 0), medianOffset(rec.samples, 1)
+    if calm then
+        if not group then
+            group = { center = Vector(rawOffset), samples = {} }
+            rec.groups[#rec.groups + 1] = group
+        end
+        group.samples[#group.samples + 1] = { raw = rawOffset, step = stepOffset }
+        if #group.samples > STEADY_SAMPLES then table.remove(group.samples, 1) end
+        group.center = medianOffset(group.samples, 0)
+    end
+
+    if not group or #group.samples == 0 then
+        -- Nothing known for this barrel yet. A raw offset within GROUP_RADIUS
+        -- of the attachment is a gun that fires from it plus swing jitter (a
+        -- pintle MG on a bouncing jeep): flash on the attachment. A larger
+        -- one is a barrel of a shared-point mount: the raw offset IS the
+        -- barrel.
+        LAST_TICK_K, LAST_TICK_COMP = 0, 0
+        if rawOffset:Length() <= GROUP_RADIUS then return vector_origin end
+        return rawOffset
+    end
+
+    local m0, m1 = medianOffset(group.samples, 0), medianOffset(group.samples, 1)
     local k = (m1:Length() < m0:Length()) and 1 or 0
     LAST_TICK_K, LAST_TICK_COMP = k, stepOffset:Length() * k
     WEAPON_K[weaponKey(ent, code)] = k
